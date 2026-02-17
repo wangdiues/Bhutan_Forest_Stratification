@@ -4,19 +4,19 @@ version = "0.1.0"
 description = "Python pipeline for forest stratification and vertical zonation in Bhutan"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy>=1.24",
-  "pandas>=2.0",
-  "openpyxl>=3.1",
-  "matplotlib>=3.7",
-  "scipy>=1.11",
-  "scikit-learn>=1.3",
-  "scikit-bio>=0.5.9",
-  "networkx>=3.1",
-  "geopandas>=0.14",
-  "rasterio>=1.3",
-  "shapely>=2.0",
-  "tqdm>=4.65",
-  "psutil>=5.9"
+  "numpy~=1.24",         # >=1.24, <2 — pin to 1.x ABI
+  "pandas~=2.0",         # >=2.0, <3
+  "openpyxl~=3.1",       # >=3.1, <4
+  "matplotlib~=3.7",     # >=3.7, <4
+  "scipy~=1.11",         # >=1.11, <2
+  "scikit-learn~=1.3",   # >=1.3, <2
+  "scikit-bio>=0.5.9",   # 0.x versioning — keep floor pin only
+  "networkx~=3.1",       # >=3.1, <4
+  "geopandas~=0.14",     # >=0.14, <1
+  "rasterio~=1.3",       # >=1.3, <2
+  "shapely~=2.0",        # >=2.0, <3
+  "tqdm~=4.65",          # >=4.65, <5
+  "psutil~=5.9"          # >=5.9, <6
 ]
 
 [project.optional-dependencies]

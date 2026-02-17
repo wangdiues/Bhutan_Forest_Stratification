@@ -148,11 +148,14 @@ class TestIndVal:
         assert set(result["species_name"]) == set(names)
 
     def test_calc_indval_stat_range(self, mod_indval):
-        """IndVal statistic should be in [0, 1]."""
+        """IndVal statistic should be in [0, 1] — strictly, with only float-epsilon tolerance."""
         sp, grp, names = self._make_matrix()
         result = mod_indval._calc_indval(sp, grp, names)
-        assert (result["stat"] >= 0).all()
-        assert (result["stat"] <= 1.0 + 1e-9).all()
+        assert (result["stat"] >= 0.0).all()
+        # IndVal is mathematically bounded to [0, 1]; allow only sub-nanosecond float overshoot
+        assert (result["stat"] <= 1.0 + 1e-12).all(), (
+            f"IndVal exceeded 1.0: max={result['stat'].max():.16f}"
+        )
 
     def test_calc_indval_exclusive_indicator(self, mod_indval):
         """sp_A occurs only in forest_A, so its best group should be forest_A."""

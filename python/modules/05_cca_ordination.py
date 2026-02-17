@@ -34,6 +34,15 @@ def module_run(config: dict) -> dict:
 
     env = env.set_index("plot_id", drop=False).reindex(plot_ids).reset_index(drop=True)
 
+    # Warn when plots in sp_mat have no matching row in env_master (silent NaN inflation)
+    missing_env = int(env["plot_id"].isna().sum()) if "plot_id" in env.columns else 0
+    warnings_list: list[str] = []
+    if missing_env > 0:
+        warnings_list.append(
+            f"{missing_env} plot(s) from sp_mat have no matching row in env_master; "
+            "their environmental variables are NaN and will be imputed by median."
+        )
+
     num_vars = [c for c in env.columns if pd.api.types.is_numeric_dtype(env[c])]
     num_vars = [c for c in num_vars if c not in {"longitude", "latitude", "forest_raster_value", "area_ha"}]
 
@@ -153,6 +162,6 @@ def module_run(config: dict) -> dict:
     return {
         "status": "success",
         "outputs": [str(f_model), str(f_anova), str(f_site), str(f_species), str(f_env)],
-        "warnings": [],
+        "warnings": warnings_list,
         "runtime_sec": time.time() - t0,
     }

@@ -41,10 +41,14 @@ def module_run(config: dict) -> dict:
     g = nx.Graph()
     for i, name in enumerate(names2):
         g.add_node(str(name))
+    # Reuse min_species_occurrence as the edge weight floor (co-occurrence frequency
+    # in number of shared plots).  A separate parameter could be added to config if
+    # the two thresholds ever need to diverge.
+    co_occ_floor = config["params"]["min_species_occurrence"]
     for i in range(adj.shape[0]):
         for j in range(i + 1, adj.shape[1]):
             w = int(adj[i, j])
-            if w >= config["params"]["min_species_occurrence"]:
+            if w >= co_occ_floor:
                 g.add_edge(str(names2[i]), str(names2[j]), weight=w)
 
     isolates = [n for n in g.nodes if g.degree(n) == 0]
@@ -103,9 +107,14 @@ def module_run(config: dict) -> dict:
     edge_w = [d.get("weight", 1) for _, _, d in edges_vis]
     max_w = max(edge_w) if edge_w else 1
 
-    # Label only the top-15 hubs by betweenness
-    hub_threshold = sorted(vis_betweenness.values(), reverse=True)[min(14, len(vis_betweenness) - 1)]
-    label_dict = {n: n for n in g_vis.nodes if vis_betweenness[n] >= hub_threshold}
+    # Label only the top-15 hubs by betweenness (guard against empty subgraph)
+    if vis_betweenness:
+        hub_threshold = sorted(vis_betweenness.values(), reverse=True)[
+            min(14, len(vis_betweenness) - 1)
+        ]
+        label_dict = {n: n for n in g_vis.nodes if vis_betweenness[n] >= hub_threshold}
+    else:
+        label_dict = {}
 
     with pub_style(font_size=10):
         fig, ax = plt.subplots(figsize=(13, 11))

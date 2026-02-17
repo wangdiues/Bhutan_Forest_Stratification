@@ -80,6 +80,14 @@ def module_run(config: dict) -> dict:
 
     alpha_full = alpha.merge(strata_rich, on="plot_id", how="left").merge(env, on="plot_id", how="left")
 
+    # Guard: a many-to-one fan-out means env or strata_rich has duplicate plot_ids
+    if len(alpha_full) != len(alpha):
+        raise RuntimeError(
+            f"Merge produced {len(alpha_full)} rows but expected {len(alpha)}. "
+            "Duplicate plot_ids detected in env_master or stratum data. "
+            "Each plot_id must be unique."
+        )
+
     f_data_csv = out_data / "alpha_diversity_complete.csv"
     f_data_rds = out_data / "alpha_diversity_complete.rds"
     f_table = out_tables / "alpha_diversity_summary.csv"
