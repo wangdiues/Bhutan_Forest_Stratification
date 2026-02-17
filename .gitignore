@@ -1,0 +1,53 @@
+# ── R ─────────────────────────────────────────────────────────────────────
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+renv/
+
+# ── Python ────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Pipeline outputs (generated, not source) ──────────────────────────────
+outputs/
+_tmp/
+
+# ── Raw / large data files ────────────────────────────────────────────────
+raw_data/
+Data/
+*.tif
+*.tiff
+*.nc
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.aux.xml
+*.tfw
+*.xlsx
+*.csv
+
+# ── OS / editor ───────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
+~$*
+*.tmp
+*.temp
+_perm_test.tmp
+delete_test.tmp

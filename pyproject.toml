@@ -1,0 +1,33 @@
+[project]
+name = "bhutan-forest-stratification"
+version = "0.1.0"
+description = "Python pipeline for forest stratification and vertical zonation in Bhutan"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "openpyxl",
+  "matplotlib",
+  "scipy",
+  "scikit-learn",
+  "scikit-bio",
+  "networkx",
+  "geopandas",
+  "rasterio",
+  "shapely",
+  "tqdm>=4.65",
+  "psutil>=5.9"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["python"]
