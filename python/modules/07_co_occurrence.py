@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np

@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend — required for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# Force non-interactive matplotlib backend before any module is loaded.
+# Prevents tkinter thread-safety crash on Windows when modules run in parallel.
+import matplotlib
+matplotlib.use('Agg')
+
 import argparse
 import importlib.util
 import logging
