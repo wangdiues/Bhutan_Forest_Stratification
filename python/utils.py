@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -18,6 +19,63 @@ matplotlib.use('Agg')  # Non-interactive backend — required for thread-safe pa
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Publication-quality plotting helpers
+# ---------------------------------------------------------------------------
+
+# Colorblind-safe palette for categorical forest types (Tableau-derived)
+FOREST_PALETTE: list[str] = [
+    "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F",
+    "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F", "#BAB0AC",
+    "#D4A6C8", "#86BCB6",
+]
+
+
+@contextmanager
+def pub_style(font_size: int = 10):
+    """Context manager that applies publication-quality matplotlib rcParams.
+
+    Removes top/right spines, adds subtle gridlines, sets a clean sans-serif
+    font. All changes are fully reverted on context exit.
+    """
+    _tracked_keys = [
+        "font.family", "font.size",
+        "axes.titlesize", "axes.titleweight",
+        "axes.labelsize",
+        "xtick.labelsize", "ytick.labelsize",
+        "legend.fontsize", "legend.title_fontsize",
+        "axes.spines.top", "axes.spines.right",
+        "axes.grid", "grid.alpha", "grid.linestyle", "grid.linewidth",
+        "axes.linewidth",
+        "xtick.direction", "ytick.direction",
+    ]
+    import matplotlib as _mpl
+    saved = {k: _mpl.rcParams[k] for k in _tracked_keys}
+    try:
+        _mpl.rcParams.update({
+            "font.family":           "sans-serif",
+            "font.size":             font_size,
+            "axes.titlesize":        font_size + 2,
+            "axes.titleweight":      "bold",
+            "axes.labelsize":        font_size,
+            "xtick.labelsize":       font_size - 1,
+            "ytick.labelsize":       font_size - 1,
+            "legend.fontsize":       font_size - 1,
+            "legend.title_fontsize": font_size,
+            "axes.spines.top":       False,
+            "axes.spines.right":     False,
+            "axes.grid":             True,
+            "grid.alpha":            0.25,
+            "grid.linestyle":        "--",
+            "grid.linewidth":        0.5,
+            "axes.linewidth":        0.8,
+            "xtick.direction":       "out",
+            "ytick.direction":       "out",
+        })
+        yield
+    finally:
+        _mpl.rcParams.update(saved)
 
 
 def load_packages(packages: Iterable[str]) -> None:

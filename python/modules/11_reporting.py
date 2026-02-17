@@ -6,10 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-try:
-    from utils import ensure_dirs
-except ImportError:
-    from python.utils import ensure_dirs
+from python.utils import ensure_dirs
 
 
 def module_run(config: dict) -> dict:

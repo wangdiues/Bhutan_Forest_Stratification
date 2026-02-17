@@ -4,10 +4,7 @@ import time
 
 import pandas as pd
 
-try:
-    from utils import check_columns, ensure_dirs
-except ImportError:
-    from python.utils import check_columns, ensure_dirs
+from python.utils import check_columns, ensure_dirs
 
 
 def module_run(config: dict) -> dict:

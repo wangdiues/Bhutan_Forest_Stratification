@@ -125,8 +125,8 @@ def test_standardize_columns():
     assert 'forest_type' in result.columns
     assert 'species_name' in result.columns
 
-    # Forest type should be string
-    assert result['forest_type'].dtype == object
+    # Forest type should be string (object or StringDtype on pandas 2+)
+    assert pd.api.types.is_string_dtype(result['forest_type'])
 
 
 def test_check_columns():

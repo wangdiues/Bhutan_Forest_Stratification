@@ -7,10 +7,7 @@ import pandas as pd
 from rasterio.warp import transform
 import re
 
-try:
-    from utils import check_columns, check_file, ensure_dirs, normalize_name, save_pickle
-except ImportError:
-    from python.utils import check_columns, check_file, ensure_dirs, normalize_name, save_pickle
+from python.utils import check_columns, check_file, ensure_dirs, normalize_name, save_pickle
 
 
 def _to_raster_crs_coords(lon: np.ndarray, lat: np.ndarray, raster_crs) -> tuple[np.ndarray, np.ndarray]:

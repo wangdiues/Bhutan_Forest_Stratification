@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 from sklearn.manifold import MDS
 
-try:
-    from utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
+from python.utils import FOREST_PALETTE, check_file, ensure_dirs, load_pickle, pub_style, save_pickle, save_plot
 
 
 def module_run(config: dict) -> dict:
@@ -103,17 +98,39 @@ def module_run(config: dict) -> dict:
     perm_text = str(ad)
     f_perm.write_text(perm_text + "\n", encoding="utf-8")
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    if "forest_type" in nmds_scores.columns:
-        for grp, sub in nmds_scores.groupby("forest_type", dropna=False):
-            ax.scatter(sub["NMDS1"], sub["NMDS2"], alpha=0.7, label=str(grp))
-        ax.legend(title="forest_type", fontsize=8)
-    else:
-        ax.scatter(nmds_scores["NMDS1"], nmds_scores["NMDS2"], alpha=0.7)
-    ax.set_title("NMDS ordination")
-    ax.set_xlabel("NMDS1")
-    ax.set_ylabel("NMDS2")
-    save_plot(fig, out_plots / "nmds_ordination.png")
+    stress_val = getattr(nmds, "stress_", np.nan)
+    with pub_style():
+        fig, ax = plt.subplots(figsize=(7, 5.5))
+        if "forest_type" in nmds_scores.columns:
+            unique_fts = sorted(nmds_scores["forest_type"].dropna().astype(str).unique())
+            cmap = {ft: FOREST_PALETTE[i % len(FOREST_PALETTE)] for i, ft in enumerate(unique_fts)}
+            for ft in unique_fts:
+                sub = nmds_scores[nmds_scores["forest_type"].astype(str) == ft]
+                ax.scatter(sub["NMDS1"], sub["NMDS2"], color=cmap[ft],
+                           s=18, alpha=0.65, linewidths=0, label=ft, rasterized=True)
+            ax.legend(title="Forest type", bbox_to_anchor=(1.01, 1), loc="upper left",
+                      framealpha=0.9, edgecolor="0.8", ncol=1, fontsize=8)
+        else:
+            ax.scatter(nmds_scores["NMDS1"], nmds_scores["NMDS2"],
+                       color=FOREST_PALETTE[0], s=18, alpha=0.65,
+                       linewidths=0, rasterized=True)
+
+        # Reference axes
+        ax.axhline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
+        ax.axvline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
+
+        # Stress annotation
+        if not np.isnan(stress_val):
+            stress_str = f"Stress = {stress_val:.4f}"
+            ax.text(0.02, 0.02, stress_str, transform=ax.transAxes,
+                    fontsize=9, va="bottom",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.9))
+
+        ax.set_xlabel("NMDS1")
+        ax.set_ylabel("NMDS2")
+        ax.set_title("NMDS Ordination of Plot Species Composition\n(Bray–Curtis dissimilarity)")
+        fig.tight_layout()
+        save_plot(fig, out_plots / "nmds_ordination.png")
 
     return {
         "status": "success",

@@ -1,0 +1,46 @@
+name: python-ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgdal-dev gdal-bin libgeos-dev libproj-dev
+
+      - name: Install Python dependencies
+        run: pip install -e ".[test]"
+
+      - name: Verify imports
+        run: |
+          python -c "from python.config import get_config; print('config OK')"
+          python -c "from python.utils import safe_z; print('utils OK')"
+          python -c "from python.validation import validate_module_result; print('validation OK')"
+
+      - name: Dry run pipeline (no data required)
+        run: python -m python.run_pipeline --dry-run --modules 00 01 02 03
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=python --cov-report=term-missing --cov-fail-under=50

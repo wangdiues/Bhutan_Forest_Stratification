@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import CCA
 
-try:
-    from utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
+from python.utils import FOREST_PALETTE, check_file, ensure_dirs, load_pickle, pub_style, save_pickle, save_plot
 
 
 def module_run(config: dict) -> dict:
@@ -54,6 +49,14 @@ def module_run(config: dict) -> dict:
     X_env = env[usable].apply(pd.to_numeric, errors="coerce")
     X_env = X_env.fillna(X_env.median(numeric_only=True))
 
+    # Limit species to the top-200 most frequent to keep CCA tractable in memory
+    MAX_SPECIES = 200
+    occ_counts = (X_species > 0).sum(axis=0)
+    if X_species.shape[1] > MAX_SPECIES:
+        top_idx = np.argsort(occ_counts)[::-1][:MAX_SPECIES]
+        X_species = X_species[:, top_idx]
+        species_names = [species_names[i] for i in top_idx]
+
     n_comp = min(2, X_env.shape[1], X_species.shape[1])
     cca = CCA(n_components=n_comp)
     Y = X_species
@@ -83,12 +86,69 @@ def module_run(config: dict) -> dict:
     env_scores.to_csv(f_env, index=False)
 
     if {"CCA1", "CCA2"}.issubset(site_scores.columns):
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(site_scores["CCA1"], site_scores["CCA2"], alpha=0.7)
-        ax.set_title("CCA site scores")
-        ax.set_xlabel("CCA1")
-        ax.set_ylabel("CCA2")
-        save_plot(fig, out_plots / "cca_sites.png")
+        # Normalise site scores to [-1, 1] independently per axis
+        s1 = site_scores["CCA1"].to_numpy(dtype=float)
+        s2 = site_scores["CCA2"].to_numpy(dtype=float)
+        s1_scale = max(np.abs(s1).max(), 1e-12)
+        s2_scale = max(np.abs(s2).max(), 1e-12)
+        s1_n = s1 / s1_scale
+        s2_n = s2 / s2_scale
+
+        # Scale env arrows independently, then cap to 0.85 of plot range
+        if "CCA1" in env_scores.columns and "CCA2" in env_scores.columns:
+            raw_e1 = env_scores["CCA1"].to_numpy(dtype=float)
+            raw_e2 = env_scores["CCA2"].to_numpy(dtype=float)
+            e_scale = max(np.sqrt(raw_e1**2 + raw_e2**2).max(), 1e-12)
+            env_s1 = raw_e1 / e_scale * 0.85
+            env_s2 = raw_e2 / e_scale * 0.85
+        else:
+            env_s1 = env_s2 = None
+
+        # Merge forest_type for colouring
+        ft_col = None
+        if "forest_type" in env.columns:
+            ft_col = env["forest_type"].astype(str).tolist()
+        elif "ForTyp" in env.columns:
+            ft_col = env["ForTyp"].astype(str).tolist()
+
+        with pub_style():
+            fig, ax = plt.subplots(figsize=(7, 6))
+
+            if ft_col is not None:
+                unique_fts = sorted(set(ft_col))
+                cmap = {ft: FOREST_PALETTE[i % len(FOREST_PALETTE)] for i, ft in enumerate(unique_fts)}
+                for ft in unique_fts:
+                    idx = [i for i, v in enumerate(ft_col) if v == ft]
+                    ax.scatter(s1_n[idx], s2_n[idx], color=cmap[ft],
+                               s=16, alpha=0.55, linewidths=0, label=ft, rasterized=True)
+                leg = ax.legend(title="Forest type", bbox_to_anchor=(1.01, 1), loc="upper left",
+                                framealpha=0.9, edgecolor="0.8", ncol=1, fontsize=8)
+            else:
+                ax.scatter(s1_n, s2_n, color=FOREST_PALETTE[0],
+                           s=16, alpha=0.55, linewidths=0, rasterized=True)
+
+            # Environment biplot arrows
+            if env_s1 is not None and env_s2 is not None:
+                arrow_scale = 0.85
+                for i, var in enumerate(env_scores["variable"]):
+                    ax.annotate(
+                        "", xy=(env_s1[i] * arrow_scale, env_s2[i] * arrow_scale), xytext=(0, 0),
+                        arrowprops=dict(arrowstyle="-|>", color="#E15759", lw=1.2),
+                    )
+                    ax.text(env_s1[i] * (arrow_scale + 0.08), env_s2[i] * (arrow_scale + 0.08),
+                            var, color="#E15759", fontsize=8, ha="center", va="center",
+                            bbox=dict(fc="white", ec="none", alpha=0.7, pad=1))
+
+            # Reference axes
+            ax.axhline(0, color="0.6", linewidth=0.6, zorder=0)
+            ax.axvline(0, color="0.6", linewidth=0.6, zorder=0)
+            ax.set_xlabel("CCA1 (normalised)")
+            ax.set_ylabel("CCA2 (normalised)")
+            ax.set_title("CCA Site Scores with Environmental Vectors")
+            ax.set_xlim(-1.15, 1.15)
+            ax.set_ylim(-1.15, 1.15)
+            fig.subplots_adjust(right=0.72)
+            save_plot(fig, out_plots / "cca_sites.png")
 
     return {
         "status": "success",

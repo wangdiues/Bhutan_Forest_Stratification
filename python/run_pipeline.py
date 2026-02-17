@@ -14,35 +14,22 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-try:
-    from config import config
-    from utils import log_done, log_section, setup_logging, write_json
-    from validation import ValidationError, validate_canonical_outputs, validate_module_result
-    from caching import (
-        load_cache,
-        save_cache,
-        should_skip_module,
-        update_cache_entry,
-        clear_cache as clear_module_cache,
-    )
-    from performance import profile_module, write_profile_report, identify_bottlenecks, format_profile_summary
-except ImportError:
-    from python.config import config
-    from python.utils import log_done, log_section, setup_logging, write_json
-    from python.validation import ValidationError, validate_canonical_outputs, validate_module_result
-    from python.caching import (
-        load_cache,
-        save_cache,
-        should_skip_module,
-        update_cache_entry,
-        clear_cache as clear_module_cache,
-    )
-    from python.performance import (
-        profile_module,
-        write_profile_report,
-        identify_bottlenecks,
-        format_profile_summary,
-    )
+from python.config import config
+from python.utils import log_done, log_section, setup_logging, write_json
+from python.validation import ValidationError, validate_canonical_outputs, validate_module_result
+from python.caching import (
+    load_cache,
+    save_cache,
+    should_skip_module,
+    update_cache_entry,
+    clear_cache as clear_module_cache,
+)
+from python.performance import (
+    profile_module,
+    write_profile_report,
+    identify_bottlenecks,
+    format_profile_summary,
+)
 
 
 def get_module_registry() -> list[dict[str, str]]:
@@ -620,6 +607,46 @@ def run_pipeline_parallel(
     return manifest
 
 
+_FALLBACK_RUNTIME_ESTIMATES = {
+    "00": 0.1,
+    "01": 2.0,
+    "01b": 0.5,
+    "02": 20.0,
+    "02b": 0.5,
+    "03": 1.5,
+    "04": 3.0,
+    "05": 2.0,
+    "06": 2.0,
+    "07": 2.0,
+    "08": 3.0,
+    "09": 1.0,
+    "10": 5.0,
+    "11": 2.0,
+}
+
+
+def _load_runtime_estimates(cfg: dict) -> dict[str, float]:
+    """Return per-module runtime estimates (seconds).
+
+    Reads actual runtimes from the most recent run_manifest.json when
+    available. Falls back to static estimates if the file is missing or
+    a module has no recorded runtime.
+    """
+    estimates = dict(_FALLBACK_RUNTIME_ESTIMATES)
+    try:
+        manifest_path = cfg["paths"]["logs"]["run_manifest"]
+        import json
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        for mid, result in manifest.get("module_results", {}).items():
+            rt = result.get("runtime_sec")
+            if isinstance(rt, (int, float)) and rt > 0:
+                estimates[mid] = float(rt)
+    except Exception:
+        pass  # Any failure falls back to static values silently
+    return estimates
+
+
 def dry_run_pipeline(
     modules: list[str] | None = None,
     from_id: str | None = None,
@@ -655,23 +682,8 @@ def dry_run_pipeline(
     input_snapshot = collect_input_snapshot(cfg)
     missing_inputs = [k for k, v in input_snapshot.items() if not v["exists"]]
 
-    # Estimate runtime based on module characteristics
-    runtime_estimates = {
-        "00": 0.1,
-        "01": 2.0,
-        "01b": 0.5,
-        "02": 20.0,
-        "02b": 0.5,
-        "03": 1.5,
-        "04": 3.0,
-        "05": 2.0,
-        "06": 2.0,
-        "07": 2.0,
-        "08": 3.0,
-        "09": 1.0,
-        "10": 5.0,
-        "11": 2.0,
-    }
+    # Estimate runtime: use actuals from last manifest, fall back to statics
+    runtime_estimates = _load_runtime_estimates(cfg)
 
     # Calculate sequential and parallel estimates
     sequential_time = sum(runtime_estimates.get(mid, 1.0) for mid in run_ids)

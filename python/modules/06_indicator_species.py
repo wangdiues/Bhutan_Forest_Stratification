@@ -2,16 +2,11 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import check_file, ensure_dirs, load_pickle, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, load_pickle, save_plot
+from python.utils import check_file, ensure_dirs, load_pickle, pub_style, save_plot
 
 
 def _calc_indval(sp: np.ndarray, grp: np.ndarray, species_names: list[str]) -> pd.DataFrame:
@@ -106,18 +101,51 @@ def module_run(config: dict) -> dict:
         long = long.sort_values(["group", "stat"], ascending=[True, False])
         long.to_csv(f_main, index=False)
 
-        top = long.groupby("group", group_keys=False).head(10)
+        top = long.groupby("group", group_keys=False).head(5)
         if len(top) > 0:
             pivot = top.pivot(index="species_name", columns="group", values="stat").fillna(0)
-            fig, ax = plt.subplots(figsize=(10, 8))
-            im = ax.imshow(pivot.values, aspect="auto")
-            ax.set_yticks(range(len(pivot.index)))
-            ax.set_yticklabels(pivot.index)
-            ax.set_xticks(range(len(pivot.columns)))
-            ax.set_xticklabels(pivot.columns, rotation=45, ha="right")
-            ax.set_title("Top indicator species by group")
-            fig.colorbar(im, ax=ax, label="IndVal")
-            save_plot(fig, out_plots / "indicator_species_heatmap.png")
+            n_sp, n_grp = pivot.shape
+            fig_h = max(5, 0.45 * n_sp + 2.5)
+            fig_w = max(7, 0.9 * n_grp + 2.5)
+
+            with pub_style(font_size=9):
+                fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+                im = ax.imshow(pivot.values, aspect="auto", cmap="YlOrRd",
+                               vmin=0, vmax=min(pivot.values.max(), 1.0))
+
+                # Cell value annotations
+                for r in range(n_sp):
+                    for c in range(n_grp):
+                        val = pivot.values[r, c]
+                        if val > 0:
+                            ax.text(c, r, f"{val:.2f}", ha="center", va="center",
+                                    fontsize=7.5,
+                                    color="white" if val > 0.5 else "0.2")
+
+                ax.set_yticks(range(n_sp))
+                ax.set_yticklabels([f"$\\it{{{sp.replace(' ', '\\ ')}}}$" for sp in pivot.index],
+                                   fontsize=8)
+                ax.set_xticks(range(n_grp))
+                ax.set_xticklabels(pivot.columns, rotation=40, ha="right", fontsize=8.5)
+                ax.set_title("Top 5 Indicator Species per Forest Type\n(IndVal statistic, p ≤ 0.05)",
+                             pad=10)
+                ax.tick_params(axis="both", which="both", length=0)
+
+                # Thin grid lines between cells
+                for x_pos in np.arange(-0.5, n_grp, 1):
+                    ax.axvline(x_pos, color="white", linewidth=0.8)
+                for y_pos in np.arange(-0.5, n_sp, 1):
+                    ax.axhline(y_pos, color="white", linewidth=0.8)
+
+                cb = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02)
+                cb.set_label("IndVal", fontsize=9)
+                cb.ax.tick_params(labelsize=8)
+                ax.set_xlabel("Forest type", labelpad=6)
+                ax.set_ylabel("Species", labelpad=6)
+                # Turn off grid from pub_style for heatmap
+                ax.grid(False)
+                fig.tight_layout()
+                save_plot(fig, out_plots / "indicator_species_heatmap.png")
     else:
         pd.DataFrame().to_csv(f_main, index=False)
         warnings.append("No significant indicator species at alpha 0.05.")

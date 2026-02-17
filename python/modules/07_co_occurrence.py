@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, load_pickle, save_pickle, save_plot
+from python.utils import FOREST_PALETTE, check_file, ensure_dirs, load_pickle, pub_style, save_pickle, save_plot
 
 
 def module_run(config: dict) -> dict:
@@ -83,18 +78,69 @@ def module_run(config: dict) -> dict:
     edge_tbl.to_csv(f_edges, index=False)
     save_pickle(f_graph, g)
 
-    pos = nx.spring_layout(g, seed=config["params"]["seed"])
-    fig, ax = plt.subplots(figsize=(12, 10))
-    edges = g.edges(data=True)
-    edge_w = [d.get("weight", 1) for _, _, d in edges]
-    nx.draw_networkx_edges(g, pos, width=[max(0.3, w / max(edge_w)) for w in edge_w], alpha=0.4, ax=ax)
-    node_colors = [com_map.get(n, 0) for n in g.nodes]
-    node_sizes = [80 + 30 * degree[n] for n in g.nodes]
-    nx.draw_networkx_nodes(g, pos, node_size=node_sizes, node_color=node_colors, cmap="viridis", ax=ax)
-    nx.draw_networkx_labels(g, pos, font_size=7, ax=ax)
-    ax.set_title("Species co-occurrence network")
-    ax.axis("off")
-    save_plot(fig, out_plots / "species_co_occurrence_network.png")
+    # --- Visualisation: trim to top-60 nodes by degree for readability ---
+    TOP_N = 60
+    top_nodes = sorted(degree, key=degree.get, reverse=True)[:TOP_N]
+    g_vis = g.subgraph(top_nodes).copy()
+
+    # Kamada-Kawai gives a more spread layout than spring for dense graphs
+    try:
+        pos = nx.kamada_kawai_layout(g_vis)
+    except Exception:
+        pos = nx.spring_layout(g_vis, seed=config["params"]["seed"])
+
+    vis_degree = dict(g_vis.degree())
+    vis_betweenness = {n: betweenness.get(n, 0) for n in g_vis.nodes}
+    vis_com = {n: com_map.get(n, 0) for n in g_vis.nodes}
+
+    # Assign a distinct colour per community
+    n_com = max(vis_com.values(), default=1)
+    com_colors = {c: FOREST_PALETTE[(c - 1) % len(FOREST_PALETTE)] for c in range(1, n_com + 1)}
+    node_color_list = [com_colors.get(vis_com[n], "#BAB0AC") for n in g_vis.nodes]
+    node_size_list = [120 + 40 * vis_degree[n] for n in g_vis.nodes]
+
+    edges_vis = g_vis.edges(data=True)
+    edge_w = [d.get("weight", 1) for _, _, d in edges_vis]
+    max_w = max(edge_w) if edge_w else 1
+
+    # Label only the top-15 hubs by betweenness
+    hub_threshold = sorted(vis_betweenness.values(), reverse=True)[min(14, len(vis_betweenness) - 1)]
+    label_dict = {n: n for n in g_vis.nodes if vis_betweenness[n] >= hub_threshold}
+
+    with pub_style(font_size=10):
+        fig, ax = plt.subplots(figsize=(13, 11))
+        nx.draw_networkx_edges(
+            g_vis, pos,
+            width=[max(0.3, 2.5 * w / max_w) for w in edge_w],
+            edge_color="0.65", alpha=0.45, ax=ax,
+        )
+        nx.draw_networkx_nodes(
+            g_vis, pos,
+            node_size=node_size_list,
+            node_color=node_color_list,
+            linewidths=0.4, edgecolors="white",
+            ax=ax,
+        )
+        nx.draw_networkx_labels(g_vis, pos, labels=label_dict,
+                                font_size=8, font_weight="bold", ax=ax)
+
+        # Community legend
+        shown = sorted(set(vis_com.values()))
+        for c in shown:
+            ax.scatter([], [], color=com_colors.get(c, "#BAB0AC"), s=80,
+                       label=f"Community {c}")
+        ax.legend(title="Community", loc="lower left", framealpha=0.9,
+                  edgecolor="0.8", fontsize=8)
+
+        ax.set_title(
+            f"Species Co-occurrence Network  (top {len(g_vis)} species by degree)\n"
+            f"Node size ∝ degree  ·  Edge width ∝ co-occurrence frequency",
+            fontsize=11,
+        )
+        ax.axis("off")
+        ax.grid(False)
+        fig.tight_layout()
+        save_plot(fig, out_plots / "species_co_occurrence_network.png")
 
     return {
         "status": "success",

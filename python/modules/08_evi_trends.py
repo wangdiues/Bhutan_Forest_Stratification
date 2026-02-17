@@ -3,17 +3,12 @@ from __future__ import annotations
 import time
 import json
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import kendalltau, theilslopes
 
-try:
-    from utils import check_file, ensure_dirs, normalize_name, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, normalize_name, save_plot
+from python.utils import check_file, ensure_dirs, normalize_name, pub_style, save_plot
 
 
 def _calc_trend(df: pd.DataFrame, value_col: str, time_col: str, min_time_points: int) -> dict:
@@ -85,14 +80,26 @@ def _extract_lon_lat_from_geo_col(evi: pd.DataFrame) -> tuple[pd.Series, pd.Seri
 
 
 def _save_trend_map(map_df: pd.DataFrame, out_map, palette: dict) -> None:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    for cls, sub in map_df.groupby("trend_class", dropna=False):
-        ax.scatter(sub["longitude"], sub["latitude"], color=palette.get(str(cls), "grey"), alpha=0.8, label=str(cls))
-    ax.set_title("EVI trend classes")
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.legend()
-    save_plot(fig, out_map)
+    counts = map_df["trend_class"].value_counts()
+    with pub_style():
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for cls, sub in map_df.groupby("trend_class", dropna=False):
+            n = counts.get(cls, 0)
+            ax.scatter(
+                sub["longitude"], sub["latitude"],
+                color=palette.get(str(cls), "#BAB0AC"),
+                s=8, alpha=0.75, linewidths=0,
+                label=f"{cls} (n={n:,})",
+                rasterized=True,
+            )
+        ax.legend(title="EVI trend class", framealpha=0.9, edgecolor="0.8",
+                  fontsize=9, loc="lower right")
+        ax.set_title("Vegetation Greenness Trend Classes (EVI)\nTheil–Sen slope, Mann–Kendall p ≤ 0.05")
+        ax.set_xlabel("Longitude (°E)")
+        ax.set_ylabel("Latitude (°N)")
+        ax.tick_params(labelsize=9)
+        fig.tight_layout()
+        save_plot(fig, out_map)
 
 
 def module_run(config: dict) -> dict:

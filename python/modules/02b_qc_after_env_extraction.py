@@ -5,10 +5,7 @@ import time
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import check_file, ensure_dirs
-except ImportError:
-    from python.utils import check_file, ensure_dirs
+from python.utils import check_file, ensure_dirs
 
 
 def module_run(config: dict) -> dict:

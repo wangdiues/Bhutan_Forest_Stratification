@@ -6,26 +6,15 @@ import time
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import (
-        check_columns,
-        check_file,
-        clean_sp_names,
-        ensure_dirs,
-        make_species_matrix,
-        save_pickle,
-        standardize_columns,
-    )
-except ImportError:
-    from python.utils import (
-        check_columns,
-        check_file,
-        clean_sp_names,
-        ensure_dirs,
-        make_species_matrix,
-        save_pickle,
-        standardize_columns,
-    )
+from python.utils import (
+    check_columns,
+    check_file,
+    clean_sp_names,
+    ensure_dirs,
+    make_species_matrix,
+    save_pickle,
+    standardize_columns,
+)
 
 
 def module_run(config: dict) -> dict:

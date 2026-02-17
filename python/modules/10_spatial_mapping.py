@@ -2,16 +2,11 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import check_file, ensure_dirs, save_plot
-except ImportError:
-    from python.utils import check_file, ensure_dirs, save_plot
+from python.utils import check_file, ensure_dirs, pub_style, save_plot
 
 
 def module_run(config: dict) -> dict:
@@ -73,31 +68,56 @@ def module_run(config: dict) -> dict:
         warnings.append(f"Spatial GeoPackage write failed: {type(exc).__name__}: {exc}")
         boundary = None
 
+    _CMAP_LOOKUP = {
+        "richness": ("YlGn",   "Species richness"),
+        "sci_index": ("RdYlGn", "SCI (z-score sum)"),
+        "NMDS1":    ("PuOr",   "NMDS1 score"),
+    }
+
     def make_map(var: str, title: str, file_name: str, discrete: bool = False):
         if var not in master.columns:
             return None
-        fig, ax = plt.subplots(figsize=(8, 6))
-        if boundary is not None:
-            boundary.boundary.plot(ax=ax, color="grey", linewidth=0.5)
-        if discrete:
-            palette = config["colors"]["trend"]
-            for cls, sub in master.groupby(var, dropna=False):
-                ax.scatter(sub["longitude"], sub["latitude"], alpha=0.85, color=palette.get(str(cls), "grey"), label=str(cls))
-            ax.legend(title=var)
-        else:
-            sc = ax.scatter(master["longitude"], master["latitude"], c=master[var], alpha=0.85, cmap="viridis")
-            fig.colorbar(sc, ax=ax, label=var)
-        ax.set_title(title)
-        ax.set_xlabel("Longitude")
-        ax.set_ylabel("Latitude")
-        save_plot(fig, out_dir / file_name)
+        with pub_style():
+            fig, ax = plt.subplots(figsize=(8, 6))
+            if boundary is not None:
+                boundary.boundary.plot(ax=ax, color="0.45", linewidth=0.7, zorder=3)
+            if discrete:
+                palette = config["colors"]["trend"]
+                counts = master[var].value_counts()
+                for cls, sub in master.groupby(var, dropna=False):
+                    ax.scatter(
+                        sub["longitude"], sub["latitude"],
+                        color=palette.get(str(cls), "#BAB0AC"),
+                        s=8, alpha=0.75, linewidths=0,
+                        label=f"{cls} (n={counts.get(cls, 0):,})",
+                        rasterized=True,
+                    )
+                ax.legend(title=var.replace("_", " ").title(),
+                          framealpha=0.9, edgecolor="0.8", fontsize=8,
+                          loc="lower right")
+            else:
+                cmap_name, cb_label = _CMAP_LOOKUP.get(var, ("viridis", var))
+                sc = ax.scatter(
+                    master["longitude"], master["latitude"],
+                    c=master[var], cmap=cmap_name,
+                    s=9, alpha=0.8, linewidths=0, rasterized=True,
+                )
+                cb = fig.colorbar(sc, ax=ax, shrink=0.7, pad=0.02)
+                cb.set_label(cb_label, fontsize=9)
+                cb.ax.tick_params(labelsize=8)
+            ax.set_title(title)
+            ax.set_xlabel("Longitude (°E)")
+            ax.set_ylabel("Latitude (°N)")
+            ax.tick_params(labelsize=9)
+            fig.tight_layout()
+            save_plot(fig, out_dir / file_name)
         return str(out_dir / file_name)
 
     for m in [
-        make_map("richness", "Species Richness", "map_species_richness.png"),
-        make_map("sci_index", "SCI", "map_sci_index.png"),
-        make_map("NMDS1", "NMDS1", "map_nmds1_scores.png"),
-        make_map("trend_class", "EVI Trend", "map_evi_trends.png", discrete=True),
+        make_map("richness",    "Species Richness across Bhutan",              "map_species_richness.png"),
+        make_map("sci_index",   "Stratification Complexity Index (SCI)",       "map_sci_index.png"),
+        make_map("NMDS1",       "Beta-Diversity Gradient (NMDS1)",             "map_nmds1_scores.png"),
+        make_map("trend_class", "Vegetation Greenness Trend (EVI)",            "map_evi_trends.png", discrete=True),
     ]:
         if m is not None:
             outputs.append(m)

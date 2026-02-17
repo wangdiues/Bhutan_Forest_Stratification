@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import time
 
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend for thread-safe parallel execution
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-try:
-    from utils import check_columns, check_file, ensure_dirs, make_species_matrix, save_pickle, save_plot
-except ImportError:
-    from python.utils import check_columns, check_file, ensure_dirs, make_species_matrix, save_pickle, save_plot
+from scipy import stats as _stats
+
+from python.utils import (
+    FOREST_PALETTE,
+    check_columns,
+    check_file,
+    ensure_dirs,
+    make_species_matrix,
+    pub_style,
+    save_pickle,
+    save_plot,
+)
 
 
 def _shannon_row(values: np.ndarray) -> float:
@@ -83,19 +89,57 @@ def module_run(config: dict) -> dict:
     alpha_full.to_csv(f_table, index=False)
 
     if "elevation" in alpha_full.columns:
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(alpha_full["elevation"], alpha_full["richness"], alpha=0.6)
         x = pd.to_numeric(alpha_full["elevation"], errors="coerce")
         y = pd.to_numeric(alpha_full["richness"], errors="coerce")
         ok = x.notna() & y.notna()
-        if ok.sum() >= 2:
-            b1, b0 = np.polyfit(x[ok], y[ok], 1)
-            xx = np.linspace(x[ok].min(), x[ok].max(), 200)
-            ax.plot(xx, b1 * xx + b0, linewidth=1)
-        ax.set_title("Species Richness vs Elevation")
-        ax.set_xlabel("Elevation")
-        ax.set_ylabel("Richness")
-        save_plot(fig, out_plots / "richness_vs_elevation.png")
+
+        with pub_style():
+            fig, ax = plt.subplots(figsize=(7, 5))
+
+            # Scatter — colour by forest type when available
+            if "forest_type" in alpha_full.columns:
+                unique_fts = sorted(alpha_full.loc[ok, "forest_type"].astype(str).unique())
+                cmap = {ft: FOREST_PALETTE[i % len(FOREST_PALETTE)] for i, ft in enumerate(unique_fts)}
+                for ft in unique_fts:
+                    mask = ok & (alpha_full["forest_type"].astype(str) == ft)
+                    ax.scatter(x[mask], y[mask], color=cmap[ft], s=14, alpha=0.55,
+                               linewidths=0, label=ft, rasterized=True)
+                ax.legend(title="Forest type", bbox_to_anchor=(1.01, 1), loc="upper left",
+                          framealpha=0.9, edgecolor="0.8", ncol=1, fontsize=8)
+            else:
+                ax.scatter(x[ok], y[ok], color=FOREST_PALETTE[0], s=14, alpha=0.55,
+                           linewidths=0, rasterized=True)
+
+            # Regression + 95 % confidence band
+            if ok.sum() >= 4:
+                slope, intercept, r_val, p_val, _ = _stats.linregress(x[ok], y[ok])
+                xx = np.linspace(x[ok].min(), x[ok].max(), 300)
+                yy = slope * xx + intercept
+                ax.plot(xx, yy, color="#E15759", linewidth=1.8, linestyle="--",
+                        zorder=5, label="Linear fit")
+                n = int(ok.sum())
+                resid_se = np.sqrt(((y[ok] - (slope * x[ok] + intercept)) ** 2).sum() / (n - 2))
+                x_mean = x[ok].mean()
+                margin = 1.96 * resid_se * np.sqrt(
+                    1 / n + (xx - x_mean) ** 2 / ((x[ok] - x_mean) ** 2).sum()
+                )
+                ax.fill_between(xx, yy - margin, yy + margin,
+                                color="#E15759", alpha=0.12, zorder=4)
+                p_str = "p < 0.001" if p_val < 0.001 else f"p = {p_val:.3f}"
+                ax.text(
+                    0.97, 0.97,
+                    f"$R^2$ = {r_val ** 2:.3f},  {p_str}\nn = {n:,}",
+                    transform=ax.transAxes, ha="right", va="top", fontsize=9,
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.9),
+                )
+
+            ax.set_xlabel("Elevation (m a.s.l.)")
+            ax.set_ylabel("Species richness")
+            ax.set_title("Species Richness Along the Elevational Gradient")
+            ax.set_xlim(left=0)
+            ax.set_ylim(bottom=0)
+            fig.tight_layout()
+            save_plot(fig, out_plots / "richness_vs_elevation.png")
 
     return {
         "status": "success",
