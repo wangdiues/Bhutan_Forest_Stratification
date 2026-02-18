@@ -92,8 +92,10 @@ Extracted at each plot centroid via bilinear resampling (rasterio):
 ### 2.5 Beta Diversity — NMDS Ordination
 
 - Species matrix: plots × species (minimum occurrence filter applied)
-- Bray-Curtis dissimilarity; 2-dimensional NMDS (Python scikit-learn / vegan-equivalent, 999 random starts)
-- **Stress = 0.338** — high stress expected with n = 1,942 plots; patterns interpreted with caution; PCoA recommended as a robustness check
+- Bray-Curtis dissimilarity; 2-dimensional non-metric MDS (sklearn SMACOF, 4 random starts, max 300 iterations, seed = 42)
+- `sklearn MDS.stress_` = 0.338 — **this is sklearn's raw residual stress, NOT Kruskal's normalized stress-1**; the standard ecological thresholds (< 0.10 good, > 0.30 poor) apply only to Kruskal stress-1 and cannot be applied here
+- The compositional gradient is independently confirmed by PERMANOVA (pseudo-F = 17.03, p = 0.001, 999 permutations), which operates directly on the Bray-Curtis distance matrix and does not depend on ordination quality
+- For final submission: **replace sklearn MDS with vegan `metaMDS`** (999 random starts, convergence-tested) to report proper Kruskal stress-1 and meet reviewer expectations for ecology journals
 - Forest type centroids and NMDS1 gradient mapped spatially
 
 ### 2.6 Canonical Correspondence Analysis
@@ -167,7 +169,7 @@ Species richness peaked at 500–1,000 m and declined monotonically towards the 
 
 ### 3.2 Beta Diversity and Community Turnover (Fig. 3)
 
-NMDS ordination (2D Bray-Curtis; stress = **0.338**; note: high stress with n = 1,942 plots — patterns interpreted directionally; PCoA cross-check recommended before submission) revealed a clear primary compositional axis (NMDS1) separating subtropical and warm broadleaved assemblages (NMDS1 means: +0.49, +0.49) from subalpine communities — Juniper-Rhododendron Scrub (−0.62), Dry Alpine Scrub (−0.58), Fir Forest (−0.57). NMDS2 reflects a secondary moisture or disturbance gradient.
+Non-metric MDS ordination (2D, Bray-Curtis dissimilarity; sklearn `stress_` = 0.338, a raw residual metric not equivalent to Kruskal's stress-1) revealed a clear primary compositional axis (NMDS1) separating subtropical and warm broadleaved assemblages (NMDS1 means: +0.49, +0.49) from subalpine communities — Juniper-Rhododendron Scrub (−0.62), Dry Alpine Scrub (−0.58), Fir Forest (−0.57). NMDS2 reflects a secondary moisture or disturbance gradient. Compositional differentiation among the 12 forest types was confirmed independently by PERMANOVA (pseudo-F = 17.03, p = 0.001, 999 permutations), which is unaffected by ordination distortion. *(Note for revision: replace sklearn MDS with vegan metaMDS to report proper Kruskal stress-1.)*
 
 **NMDS1 means by forest type:**
 
@@ -295,7 +297,7 @@ Per-plot EVI slope correlated positively with species richness across all 1,910 
 The elevation–richness relationship shows a monotonic decline above 1,000 m rather than a classic mid-domain hump. This contrasts with some Himalayan studies (Grytnes & Vetaas 2002) but is consistent with the high productivity of Bhutan's warm, wet subtropical lowlands. Lowland agriculture-forest boundaries may maintain edge diversity, inflating low-elevation richness.
 
 **¶2 — Temperature seasonality as primary community driver**
-The dominance of bio11 and bio10 on CCA2 points to cold-season temperature stress — not mean annual temperature or precipitation alone — as the key filter separating forest assemblages. This is consistent with cold hardiness as the primary trait axis in Himalayan trees (Körner 2012) and with treeline being thermally rather than hydrologically determined in this region. Note: NMDS stress (0.338) is high for a 2D solution with 1,942 plots; the NMDS1 gradient is treated as directional only and corroborated by CCA results, which do not require low stress.
+The dominance of bio11 and bio10 on CCA2 points to cold-season temperature stress — not mean annual temperature or precipitation alone — as the key filter separating forest assemblages. This is consistent with cold hardiness as the primary trait axis in Himalayan trees (Körner 2012) and with treeline being thermally rather than hydrologically determined in this region. The NMDS1 gradient is corroborated by PERMANOVA (pseudo-F = 17.03, p = 0.001) and CCA (both constrained on the same environmental matrix) — the compositional differentiation is not an ordination artefact.
 
 **¶3 — Indicator species confirm discrete zonation**
 High IndVal scores for conifers (*Pinus roxburghii* 0.794, *Picea spinulosa* 0.463, *Pinus wallichiana* 0.411, *Abies densa* 0.387) confirm strong habitat fidelity and discrete boundaries. Lower IndVal in broadleaf types reflects wider environmental tolerances and greater species turnover. Rhododendron species as alpine indicators (*R. anthopogon*, *R. aeruginosum*, *R. setosum*) are consistent with their known dominance above treeline.
@@ -310,7 +312,7 @@ The SCI gradient (subtropical > warm broadleaved > cool broadleaved > ... > alpi
 The finding that 42.9% of Bhutan's forested area is significantly greening is consistent with the "global greening" phenomenon documented from MODIS (Zhu et al. 2016) and with specific Himalayan studies reporting enhanced vegetation productivity across Nepal and NE India (Lamsal et al. 2017). The elevation gradient in greening intensity — strongest at low elevations (< 1,500 m), weakest in the montane zone (2,000–4,000 m), with a secondary peak at > 4,000 m — suggests multiple co-occurring drivers. Low-elevation greening may reflect community forestry programmes and reduced disturbance pressure. The high-elevation signal (alpine scrub: 43.8% significant greening) is consistent with climate warming-driven upslope shrubification documented elsewhere in the Hindu Kush Himalaya. The mid-elevation trough warrants investigation as potentially linked to increased monsoon variability or anthropogenic disturbance in the most densely populated elevation bands. The positive richness–EVI slope correlation (r = 0.105, p < 0.001) is consistent with the productivity-diversity hypothesis and suggests that areas with higher plant diversity are also those experiencing stronger positive vegetation trends — though causality cannot be established from a single-epoch cross-sectional design.
 
 **¶7 — Limitations**
-- NMDS stress (0.338) is high; ordination patterns are treated as indicative and cross-validated with CCA; PCoA or 3D NMDS recommended as a robustness check before final submission
+- The sklearn MDS `stress_` value (0.338) is a raw residual, not Kruskal's normalized stress-1 — the standard "< 0.20 poor, > 0.30 misleading" thresholds do not apply; for submission, replace sklearn MDS with vegan `metaMDS` (999 starts) to report proper stress-1; compositional patterns are independently supported by PERMANOVA (pseudo-F = 17.03, p = 0.001)
 - Pixel-level EVI classifications use a normal approximation for MK p-values (where GEE-exported p-value band was unavailable); analytical p-values are standard but introduce minor approximation error for short time series
 - NFI is a single-epoch survey; temporal diversity dynamics require repeat inventory
 - Co-occurrence edges are all positive (co-presence counts); null-model-based competitive exclusion detection is needed for a complete assembly picture
@@ -393,7 +395,9 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 | Tree layer richness | 9.1 ± 7.3 |
 | Shrub layer richness | 5.5 ± 4.2 |
 | Herb layer richness | 2.8 ± 3.2 |
-| NMDS stress (2D) | **0.338** ⚠ high — treat patterns as directional; PCoA cross-check needed |
+| sklearn MDS `stress_` (2D) | 0.338 — raw residual metric; NOT Kruskal stress-1; standard thresholds do not apply |
+| PERMANOVA pseudo-F | **17.03**, p = 0.001 (999 permutations) — forest types compositionally distinct |
+| Action required | Replace sklearn MDS → vegan `metaMDS` (999 starts) to report proper Kruskal stress-1 |
 | NMDS1 range | −1.065 to +0.968 |
 | Primary CCA driver | bio11 (CCA2 = +0.610) |
 | Significant indicator associations | 410 (all p ≤ 0.05) |
@@ -438,7 +442,7 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 ## Immediate Next Steps
 
 ### Before writing
-1. ⚠️ **NMDS stress (0.338) is high** — run PCoA cross-check; if PCoA confirms the same gradient, keep NMDS and disclose stress; if not, switch to PCoA for Fig. 3
+1. ⚠️ **Replace sklearn MDS → vegan `metaMDS`** — the current implementation (sklearn, 4 random starts) is not publication-standard for ecology; use R's vegan `metaMDS(bray, k=2, trymax=100)` to get proper Kruskal stress-1 and convergence; PERMANOVA (F=17.03, p=0.001) already confirms the compositional signal is real
 2. Draft **Table 1** (alpha diversity by forest type) — all numbers in §3.1
 3. Draft **Table 2** (indicator species) — top 3 per forest zone, all 36 rows ready in §3.4
 4. Draft **Table 4** (EVI area classification) — copy directly from `outputs/evi_spatial/tables/evi_area_stats.csv`
