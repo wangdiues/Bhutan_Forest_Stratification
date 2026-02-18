@@ -159,7 +159,7 @@ def get_module_outputs(module_id: str, cfg: dict) -> List[Path]:
         "05": [output_dirs["05_cca_ordination"] / "models" / "cca_model.pkl"],
         "06": [output_dirs["06_indicator_species"] / "tables" / "indicator_species.csv"],
         "07": [output_dirs["07_co_occurrence"] / "tables" / "co_occurrence_matrix.csv"],
-        "08": [output_dirs["08_evi_trends"] / "tables" / "evi_trend_summary.csv"],
+        "08": [output_dirs["08_evi_spatial"] / "tables" / "plot_evi_trends.csv"],
         "09": [output_dirs["09_sci_index"] / "tables" / "sci_scores.csv"],
         "10": [output_dirs["10_spatial_mapping"] / "composite_map.png"],
         "11": [output_dirs["11_reporting"] / "pipeline_summary_report.html"],
