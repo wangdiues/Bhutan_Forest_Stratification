@@ -9,6 +9,108 @@ import pandas as pd
 from python.utils import check_file, ensure_dirs, pub_style, save_plot
 
 
+def _plot_evi_national_map(
+    master: pd.DataFrame,
+    evi: pd.DataFrame,
+    boundary,
+    palette: dict,
+    out_path,
+    config: dict,
+) -> None:
+    """Publication-quality national EVI trend spatial overview.
+
+    Used when EVI data is a country-aggregate (no per-plot variation).
+    Shows Bhutan filled with the national trend colour, NFI plot locations
+    as grey dots, and a statistics annotation box.
+    """
+    import matplotlib.patches as mpatches
+    import matplotlib.patheffects as pe
+
+    # Pull national-level stats from first row (all rows are identical).
+    row = evi.iloc[0]
+    trend_cls   = str(row.get("trend_class", "Unknown"))
+    slope_day   = float(row.get("theil_sen_slope", 0.0))
+    slope_yr    = slope_day * 365.25          # EVI units per calendar year
+    p_val       = float(row.get("mk_p_value", 1.0))
+    n_obs       = int(row.get("n_obs", 0))
+    fill_color  = palette.get(trend_cls, "#BAB0AC")
+
+    p_str = "p < 0.001" if p_val < 0.001 else f"p = {p_val:.4f}"
+
+    ann_text = (
+        f"National EVI Trend:  {trend_cls.upper()}\n\n"
+        f"Theil–Sen slope:   {slope_yr:+.2f} EVI yr⁻¹\n"
+        f"Mann–Kendall:      {p_str}\n"
+        f"Period:             2000 – 2024\n"
+        f"Observations:       {n_obs:,} (MODIS 16-day composites)\n\n"
+        f"Note: country-aggregate EVI — plot-level data unavailable.\n"
+        f"NFI plot locations shown for spatial context only."
+    )
+
+    with pub_style(font_size=11):
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Fill Bhutan polygon with trend colour (semi-transparent).
+        if boundary is not None:
+            try:
+                boundary.plot(
+                    ax=ax,
+                    color=fill_color, alpha=0.18,
+                    zorder=1,
+                )
+                boundary.boundary.plot(
+                    ax=ax,
+                    color="0.30", linewidth=0.9,
+                    zorder=2,
+                )
+            except Exception:
+                pass
+
+        # NFI plot locations — grey dots for spatial context.
+        loc = master.dropna(subset=["longitude", "latitude"])
+        ax.scatter(
+            loc["longitude"], loc["latitude"],
+            color="#7F7F7F", s=6, alpha=0.45, linewidths=0,
+            label=f"NFI plots (n={len(loc):,})",
+            rasterized=True, zorder=3,
+        )
+
+        # Trend colour swatch in legend.
+        trend_patch = mpatches.Patch(
+            facecolor=fill_color, edgecolor="0.4", linewidth=0.6,
+            label=f"National trend: {trend_cls}",
+            alpha=0.65,
+        )
+        ax.legend(
+            handles=[trend_patch,
+                     mpatches.Patch(color="#7F7F7F", alpha=0.6, label=f"NFI plots (n={len(loc):,})")],
+            loc="lower right", framealpha=0.92, edgecolor="0.7", fontsize=9,
+        )
+
+        # Statistics annotation box (upper-left).
+        ax.annotate(
+            ann_text,
+            xy=(0.02, 0.98), xycoords="axes fraction",
+            va="top", ha="left", fontsize=9,
+            family="monospace",
+            bbox=dict(
+                boxstyle="round,pad=0.55",
+                facecolor="white", edgecolor="0.60", alpha=0.95,
+            ),
+            zorder=6,
+        )
+
+        ax.set_title(
+            "Vegetation Greenness Trend — Bhutan  (MODIS MOD13Q1 EVI, 2000–2024)",
+            fontweight="bold", fontsize=12, pad=10,
+        )
+        ax.set_xlabel("Longitude (°E)", labelpad=5)
+        ax.set_ylabel("Latitude (°N)", labelpad=5)
+        ax.tick_params(labelsize=10)
+        fig.tight_layout()
+        save_plot(fig, out_path)
+
+
 def module_run(config: dict) -> dict:
     t0 = time.time()
     out_dir = ensure_dirs("10_spatial_mapping", config)
@@ -40,10 +142,17 @@ def module_run(config: dict) -> dict:
             if axis != "NMDS1":
                 master = master.rename(columns={axis: "NMDS1"})
 
+    evi_df = None
+    evi_is_national = False
     if evi_path.exists():
-        evi = pd.read_csv(evi_path)
-        if {"plot_id", "trend_class"}.issubset(evi.columns):
-            master = master.merge(evi[["plot_id", "trend_class"]], on="plot_id", how="left")
+        evi_df = pd.read_csv(evi_path)
+        if {"plot_id", "trend_class"}.issubset(evi_df.columns):
+            master = master.merge(evi_df[["plot_id", "trend_class"]], on="plot_id", how="left")
+        # Detect country-replicated data: trend_unit flag OR all plots share one trend class.
+        if "trend_unit" in evi_df.columns:
+            evi_is_national = evi_df["trend_unit"].str.contains("country", na=False).all()
+        elif "trend_class" in evi_df.columns:
+            evi_is_national = evi_df["trend_class"].nunique() <= 1
 
     outputs = []
     out_gpkg = out_dir / "spatial_master_points.gpkg"
@@ -114,13 +223,32 @@ def module_run(config: dict) -> dict:
         return str(out_dir / file_name)
 
     for m in [
-        make_map("richness",    "Species Richness across Bhutan",              "map_species_richness.png"),
-        make_map("sci_index",   "Stratification Complexity Index (SCI)",       "map_sci_index.png"),
-        make_map("NMDS1",       "Beta-Diversity Gradient (NMDS1)",             "map_nmds1_scores.png"),
-        make_map("trend_class", "Vegetation Greenness Trend (EVI)",            "map_evi_trends.png", discrete=True),
+        make_map("richness",  "Species Richness across Bhutan",         "map_species_richness.png"),
+        make_map("sci_index", "Stratification Complexity Index (SCI)",  "map_sci_index.png"),
+        make_map("NMDS1",     "Beta-Diversity Gradient (NMDS1)",        "map_nmds1_scores.png"),
     ]:
         if m is not None:
             outputs.append(m)
+
+    # EVI trend map — national overview when data is country-aggregate, per-plot scatter otherwise.
+    evi_out = out_dir / "map_evi_trends.png"
+    if evi_df is not None and evi_is_national:
+        _plot_evi_national_map(
+            master, evi_df, boundary,
+            config["colors"]["trend"], evi_out, config,
+        )
+        outputs.append(str(evi_out))
+        warnings.append(
+            "EVI spatial map shows national-aggregate trend (no per-plot EVI data); "
+            "NFI plot locations included for spatial context."
+        )
+    else:
+        result = make_map(
+            "trend_class", "Vegetation Greenness Trend (EVI)",
+            "map_evi_trends.png", discrete=True,
+        )
+        if result is not None:
+            outputs.append(result)
 
     return {
         "status": "success",
