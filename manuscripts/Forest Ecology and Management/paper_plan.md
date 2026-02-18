@@ -7,6 +7,7 @@ Forest Stratification and Vertical Zonation across Environmental Gradients in Bh
 Altitudinal Drivers of Forest Diversity and Structure in the Eastern Himalayas: A Multi-Method Analysis of Bhutan's National Forest Inventory
 
 **Date drafted:** 2026-02-18
+**Last updated:** 2026-02-18 (pipeline finalised; all figures regenerated at publication quality)
 
 ---
 
@@ -54,7 +55,7 @@ Bhutan retains >70% forest cover under a constitutional mandate; its forests spa
 3. Identify indicator taxa diagnostic of each forest zone
 4. Describe co-occurrence network topology and community modularity
 5. Compute a Stratification Complexity Index (SCI) integrating multi-layer structural information
-6. Assess 24-year national forest greenness trend as an independent landscape-level monitoring signal
+6. Assess 24-year spatially-explicit vegetation greenness trend (per pixel and per plot) and link it to elevation zone and forest type using MODIS EVI raster data
 
 **¶5 — Novelty and significance**
 First integrated, country-scale, multi-method synthesis of Bhutan's forest vertical zonation using NFI; provides a fully reproducible open-source analysis pipeline; directly relevant to Bhutan's REDD+ commitments and National Biodiversity Strategy.
@@ -91,8 +92,9 @@ Extracted at each plot centroid via bilinear resampling (rasterio):
 ### 2.5 Beta Diversity — NMDS Ordination
 
 - Species matrix: plots × species (minimum occurrence filter applied)
-- Bray-Curtis dissimilarity; 2-dimensional NMDS (vegan::metaMDS, 999 random starts)
-- Report stress value; overlay forest type centroids and environmental vectors
+- Bray-Curtis dissimilarity; 2-dimensional NMDS (Python scikit-learn / vegan-equivalent, 999 random starts)
+- **Stress = 0.338** — high stress expected with n = 1,942 plots; patterns interpreted with caution; PCoA recommended as a robustness check
+- Forest type centroids and NMDS1 gradient mapped spatially
 
 ### 2.6 Canonical Correspondence Analysis
 
@@ -123,9 +125,9 @@ Extracted at each plot centroid via bilinear resampling (rasterio):
 
 ### 2.10 Spatially-Explicit EVI Trend Analysis
 
-- **Data:** Google Earth Engine exports of MODIS MOD13Q1 (V061), 2000–2024:
-  - Theil-Sen slope raster (GeoTIFF, ~500 m pixel)
-  - Mann-Kendall tau raster (p-values derived analytically from tau using normal approximation: Var(S) = n(n−1)(2n+5)/18, Z = (S∓1)/√Var(S), p = 2(1−Φ(|Z|)), n = 25 years)
+- **Data:** Google Earth Engine exports of MODIS MOD13Q1 (V061) at native 250 m resolution, 2000–2024:
+  - Theil-Sen slope raster (GeoTIFF, ~250 m pixel; 684,055 valid pixels = 42,754 km²)
+  - Mann-Kendall tau raster (2 bands: tau, p-value); where GEE p-value band was all NaN, p-values derived analytically from tau using normal approximation: Var(S) = n(n−1)(2n+5)/18, Z = (S∓1)/√Var(S), p = 2(1−Φ(|Z|)), n = 25 years
   - Annual EVI stack (25 bands, 2000–2024)
 - **Per-plot extraction:** Theil-Sen slope and MK tau sampled at each NFI plot centroid (rasterio)
 - **Pixel-level classification:** Significant greening (slope > 0, p ≤ 0.05), significant browning (slope < 0, p ≤ 0.05), stable/non-significant
@@ -165,7 +167,7 @@ Species richness peaked at 500–1,000 m and declined monotonically towards the 
 
 ### 3.2 Beta Diversity and Community Turnover (Fig. 3)
 
-NMDS ordination (stress = *[extract from output]*) revealed a clear primary compositional axis (NMDS1) separating subtropical and warm broadleaved assemblages (NMDS1 means: +0.49, +0.49) from subalpine communities — Juniper-Rhododendron Scrub (−0.62), Dry Alpine Scrub (−0.58), Fir Forest (−0.57). NMDS2 reflects a secondary moisture or disturbance gradient.
+NMDS ordination (2D Bray-Curtis; stress = **0.338**; note: high stress with n = 1,942 plots — patterns interpreted directionally; PCoA cross-check recommended before submission) revealed a clear primary compositional axis (NMDS1) separating subtropical and warm broadleaved assemblages (NMDS1 means: +0.49, +0.49) from subalpine communities — Juniper-Rhododendron Scrub (−0.62), Dry Alpine Scrub (−0.58), Fir Forest (−0.57). NMDS2 reflects a secondary moisture or disturbance gradient.
 
 **NMDS1 means by forest type:**
 
@@ -293,7 +295,7 @@ Per-plot EVI slope correlated positively with species richness across all 1,910 
 The elevation–richness relationship shows a monotonic decline above 1,000 m rather than a classic mid-domain hump. This contrasts with some Himalayan studies (Grytnes & Vetaas 2002) but is consistent with the high productivity of Bhutan's warm, wet subtropical lowlands. Lowland agriculture-forest boundaries may maintain edge diversity, inflating low-elevation richness.
 
 **¶2 — Temperature seasonality as primary community driver**
-The dominance of bio11 and bio10 on CCA2 points to cold-season temperature stress — not mean annual temperature or precipitation alone — as the key filter separating forest assemblages. This is consistent with cold hardiness as the primary trait axis in Himalayan trees (Körner 2012) and with treeline being thermally rather than hydrologically determined in this region.
+The dominance of bio11 and bio10 on CCA2 points to cold-season temperature stress — not mean annual temperature or precipitation alone — as the key filter separating forest assemblages. This is consistent with cold hardiness as the primary trait axis in Himalayan trees (Körner 2012) and with treeline being thermally rather than hydrologically determined in this region. Note: NMDS stress (0.338) is high for a 2D solution with 1,942 plots; the NMDS1 gradient is treated as directional only and corroborated by CCA results, which do not require low stress.
 
 **¶3 — Indicator species confirm discrete zonation**
 High IndVal scores for conifers (*Pinus roxburghii* 0.794, *Picea spinulosa* 0.463, *Pinus wallichiana* 0.411, *Abies densa* 0.387) confirm strong habitat fidelity and discrete boundaries. Lower IndVal in broadleaf types reflects wider environmental tolerances and greater species turnover. Rhododendron species as alpine indicators (*R. anthopogon*, *R. aeruginosum*, *R. setosum*) are consistent with their known dominance above treeline.
@@ -308,11 +310,12 @@ The SCI gradient (subtropical > warm broadleaved > cool broadleaved > ... > alpi
 The finding that 42.9% of Bhutan's forested area is significantly greening is consistent with the "global greening" phenomenon documented from MODIS (Zhu et al. 2016) and with specific Himalayan studies reporting enhanced vegetation productivity across Nepal and NE India (Lamsal et al. 2017). The elevation gradient in greening intensity — strongest at low elevations (< 1,500 m), weakest in the montane zone (2,000–4,000 m), with a secondary peak at > 4,000 m — suggests multiple co-occurring drivers. Low-elevation greening may reflect community forestry programmes and reduced disturbance pressure. The high-elevation signal (alpine scrub: 43.8% significant greening) is consistent with climate warming-driven upslope shrubification documented elsewhere in the Hindu Kush Himalaya. The mid-elevation trough warrants investigation as potentially linked to increased monsoon variability or anthropogenic disturbance in the most densely populated elevation bands. The positive richness–EVI slope correlation (r = 0.105, p < 0.001) is consistent with the productivity-diversity hypothesis and suggests that areas with higher plant diversity are also those experiencing stronger positive vegetation trends — though causality cannot be established from a single-epoch cross-sectional design.
 
 **¶7 — Limitations**
+- NMDS stress (0.338) is high; ordination patterns are treated as indicative and cross-validated with CCA; PCoA or 3D NMDS recommended as a robustness check before final submission
 - Pixel-level EVI classifications use a normal approximation for MK p-values (where GEE-exported p-value band was unavailable); analytical p-values are standard but introduce minor approximation error for short time series
 - NFI is a single-epoch survey; temporal diversity dynamics require repeat inventory
 - Co-occurrence edges are all positive (co-presence counts); null-model-based competitive exclusion detection is needed for a complete assembly picture
 - CCA1 axis explained negligible variance; only CCA2 is ecologically interpretable
-- EVI spatial resolution (~500 m) may not capture fine-scale within-plot variation in forest structure
+- EVI spatial resolution (~250 m MODIS) may not capture fine-scale within-plot variation in forest structure; higher-resolution Sentinel-2 integration is recommended for future NFI cycles
 
 **¶8 — Management and policy implications**
 - Subtropical and warm broadleaved forests (highest richness, highest SCI) warrant highest biodiversity protection priority
@@ -332,19 +335,20 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 
 | # | Title | Source file | Notes |
 |---|---|---|---|
-| 1 | Study area and NFI plot distribution | `map_species_richness.png` (adapted) | Bhutan boundary + 1,942 plots coloured by forest type |
+| 1 | Study area and NFI plot distribution | `map_species_richness.png` (adapted) | Bhutan territory fill + boundary; 1,942 plots coloured by forest type; YlGn colormap; publication-quality (module 10) |
 | 2 | Alpha diversity across the elevational gradient | Computed from alpha table | Richness, Shannon H, layer richness vs. elevation; LOESS + 95% CI |
-| 3 | NMDS ordination of forest community composition | Beta diversity outputs | 2D biplot; forest types as coloured hulls; env vectors overlaid |
+| 3 | NMDS ordination of forest community composition | Beta diversity outputs | 2D biplot; forest types as coloured hulls; env vectors overlaid; stress = 0.338 reported |
 | 4 | CCA triplot: species, sites, and environmental vectors | CCA tables | Sites (grey), species (blue), env arrows (red); CCA2 axis labelled |
 | 5 | Species co-occurrence network | Network edges + node metrics | Nodes coloured by module (3 modules); size ∝ degree; hub species labelled |
-| 6 | Stratification Complexity Index: spatial and elevational | `map_sci_index.png` + SCI table | (a) spatial map; (b) SCI vs. elevation scatter by forest type |
-| 7 | EVI spatial trend map 2000–2024 | `evi_spatial_trend_map.png` | Bhutan pixel-level classification: green (sig. greening), red (sig. browning), grey (stable); boundary + NFI plots overlaid |
-| 8 | EVI trend by elevation and forest type | `evi_slope_vs_elevation.png` + `evi_slope_by_forest_type.png` | (a) mean Theil-Sen slope ± CI by 500-m band; (b) % significantly greening by forest type |
-| 9 | EVI slope vs. species richness | `evi_slope_vs_richness_sci.png` | Per-plot scatter: EVI slope (y) vs. richness (x); Pearson r = 0.105, p < 0.001; coloured by forest type |
-| S1 | NMDS1 scores spatial map | `map_nmds1_scores.png` | Spatial gradient of NMDS1 across Bhutan |
+| 6 | Stratification Complexity Index: spatial and elevational | `map_sci_index.png` + SCI table | (a) spatial scatter map — RdYlGn diverging, centred at 0; (b) SCI vs. elevation scatter by forest type |
+| 7 | EVI spatial trend map 2000–2024 | `evi_spatial_trend_map.png` | Pixel-level classification (250 m): green = sig. greening, brown = sig. browning, grey = stable; Bhutan territory fill + boundary + white-ring NFI dots; Mann-Kendall p ≤ 0.05 |
+| 8 | EVI trend slope by elevation and forest type | `evi_slope_vs_elevation.png` + `evi_slope_by_forest_type.png` | (a) per-plot Theil-Sen slope vs. elevation scatter with rolling mean ± SE ribbon, elevation zone bands; (b) horizontal box plots sorted by median slope, n-counts annotated |
+| 9 | EVI slope vs. species richness and SCI | `evi_slope_vs_richness_sci.png` | 2-panel scatter: per-plot slope (y) vs. richness / SCI (x); OLS regression + bootstrap 95% CI band; coloured by elevation (terrain_r); Pearson r = 0.105, p < 0.001 |
+| S1 | NMDS1 scores spatial map | `map_nmds1_scores.png` | Spatial gradient of NMDS1 across Bhutan; PuOr diverging colormap centred at 0 |
 | S2 | Full indicator species table | indicator_species_detailed.csv | All 410 significant indicators, IndVal, p-value, forest zone |
 | S3 | Alpha diversity by dzongkhag and forest type | Alpha table | Box plots; districts + 12 forest types |
-| S4 | Integrated EVI panel | `evi_integrated_panel.png` | 4-panel: spatial map + elevation trend + forest type bars + richness scatter |
+| S4 | Integrated EVI panel | `evi_integrated_panel.png` | 4-panel: (a) pixel spatial map + (b) elevation band bar chart ± 95% CI + (c) forest type box plots + (d) richness scatter |
+| S5 | NFI plot EVI trend classification map | `map_evi_trends.png` | Per-plot scatter: Greening / Browning / Stable (Greening plotted on top); genuine spatial variation from raster extraction; Bhutan fill + boundary (module 10) |
 
 ---
 
@@ -389,6 +393,7 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 | Tree layer richness | 9.1 ± 7.3 |
 | Shrub layer richness | 5.5 ± 4.2 |
 | Herb layer richness | 2.8 ± 3.2 |
+| NMDS stress (2D) | **0.338** ⚠ high — treat patterns as directional; PCoA cross-check needed |
 | NMDS1 range | −1.065 to +0.968 |
 | Primary CCA driver | bio11 (CCA2 = +0.610) |
 | Significant indicator associations | 410 (all p ≤ 0.05) |
@@ -399,7 +404,7 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 | SCI range | −15.15 to +25.15 |
 | Highest SCI forest type | Subtropical Forest (+4.49) |
 | Lowest SCI forest type | Dry Alpine Scrub (−5.44) |
-| EVI data | MODIS MOD13Q1 V061, 2000–2024, ~500 m resolution |
+| EVI data | MODIS MOD13Q1 V061, 2000–2024, **~250 m** native resolution |
 | Total valid EVI pixels | 684,055 pixels (42,754 km²) |
 | Significantly greening (p ≤ 0.05) | 293,521 pixels — 18,345 km² — **42.9%** |
 | Significantly browning (p ≤ 0.05) | 8,900 pixels — 556 km² — 1.3% |
@@ -412,13 +417,45 @@ Bhutan's forests display strong vertical zonation structured primarily by cold-s
 
 ---
 
+## Pipeline Status (as of 2026-02-18)
+
+| Module | Status | Key outputs |
+|--------|--------|-------------|
+| 00–03 | ✅ Complete | data inspection, cleaning, env extraction, alpha diversity |
+| 04 beta_diversity | ✅ Complete (20 min) | NMDS scores, stress = 0.338 |
+| 05 cca_ordination | ✅ Complete | CCA triplot, biplot scores |
+| 06 indicator_species | ✅ Complete | 410 significant IndVal associations |
+| 07 co_occurrence | ✅ Complete | 1,115 nodes, 29,854 edges, 3 modules |
+| 08 evi_spatial_analysis | ✅ Complete (34 s) | 5 plots + 4 tables in `outputs/evi_spatial/` |
+| 09 sci_index | ✅ Complete | SCI per plot, forest type summaries |
+| 10 spatial_mapping | ✅ Complete (13 s) | 4 publication-quality maps in `outputs/spatial_maps/` |
+| 11 reporting | ⬜ Not yet run | HTML pipeline report |
+
+**All figures for Figs. 7–9 + S4–S5 confirmed production quality** (18:22, 2026-02-18)
+
+---
+
 ## Immediate Next Steps
 
-1. Extract NMDS stress value from beta diversity log files — required for Methods §2.5
+### Before writing
+1. ⚠️ **NMDS stress (0.338) is high** — run PCoA cross-check; if PCoA confirms the same gradient, keep NMDS and disclose stress; if not, switch to PCoA for Fig. 3
 2. Draft **Table 1** (alpha diversity by forest type) — all numbers in §3.1
-3. Draft **Table 2** (indicator species) — all 36 rows in §3.4
-4. Draft **Table 4** (EVI area classification) — `evi_area_stats.csv` ready
-5. Write **Methods section first** — most objective, sets up all results
-6. Review *Forest Ecology and Management* author guidelines (PDF in this folder)
-7. Decide corresponding author and institutional affiliations
-8. Check Figs. 7–9 output quality: `evi_spatial_trend_map.png`, `evi_slope_vs_elevation.png`, `evi_slope_by_forest_type.png`, `evi_slope_vs_richness_sci.png` in `outputs/evi_spatial/plots/`
+3. Draft **Table 2** (indicator species) — top 3 per forest zone, all 36 rows ready in §3.4
+4. Draft **Table 4** (EVI area classification) — copy directly from `outputs/evi_spatial/tables/evi_area_stats.csv`
+
+### Writing order (recommended)
+5. Write **§2 Methods** first (most objective) — §2.1 → §2.4 → §2.10 → §2.5–§2.9 → §2.11
+6. Write **§3 Results** — populate table cells, insert figure cross-references
+7. Write **§4 Discussion** — use paragraph outlines above, ≤1,200 words
+8. Write **§1 Introduction** last — 900 words, 5 paragraphs
+9. Write **Abstract** from the "Key Numbers Reference" table above
+
+### Editorial and submission
+10. Review *Forest Ecology and Management* author guidelines (PDF in this folder)
+11. Confirm journal word limit (8,000 words) and figure number limit
+12. Decide corresponding author and institutional affiliations before submission
+13. Obtain DOIs or preprint links for all data and code cited in §2.11
+
+### Optional improvements (pre-submission)
+14. Re-run module 11 to generate the HTML pipeline summary report
+15. Consider adding a 5th figure: SCI spatial map (`map_sci_index.png`) with elevation profile subplot — currently Fig. 6 composite
