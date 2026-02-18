@@ -44,11 +44,10 @@ def get_module_registry() -> list[dict[str, str]]:
         {"id": "05", "name": "cca_ordination", "file": "python/modules/05_cca_ordination.py", "deps": "02"},
         {"id": "06", "name": "indicator_species", "file": "python/modules/06_indicator_species.py", "deps": "03"},
         {"id": "07", "name": "co_occurrence", "file": "python/modules/07_co_occurrence.py", "deps": "03"},
-        {"id": "08", "name": "evi_trends", "file": "python/modules/08_evi_trends.py", "deps": "01"},
         {"id": "08b", "name": "evi_spatial_analysis", "file": "python/modules/08b_evi_spatial_analysis.py", "deps": "03,09"},
         {"id": "09", "name": "sci_index", "file": "python/modules/09_sci_index.py", "deps": "03"},
-        {"id": "10", "name": "spatial_mapping", "file": "python/modules/10_spatial_mapping.py", "deps": "03,04,08,09"},
-        {"id": "11", "name": "reporting", "file": "python/modules/11_reporting.py", "deps": "03,04,05,06,07,08,09,10"},
+        {"id": "10", "name": "spatial_mapping", "file": "python/modules/10_spatial_mapping.py", "deps": "03,04,08b,09"},
+        {"id": "11", "name": "reporting", "file": "python/modules/11_reporting.py", "deps": "03,04,05,06,07,08b,09,10"},
     ]
 
 
@@ -619,7 +618,6 @@ _FALLBACK_RUNTIME_ESTIMATES = {
     "05": 2.0,
     "06": 2.0,
     "07": 2.0,
-    "08": 3.0,
     "09": 1.0,
     "10": 5.0,
     "11": 2.0,
