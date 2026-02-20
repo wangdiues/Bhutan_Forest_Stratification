@@ -21,6 +21,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libgdal-dev gdal-bin libgeos-dev libproj-dev
+          version: 1.0
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq

@@ -262,10 +262,72 @@ def module_run(config: dict) -> dict:
         warnings.append(f"PERMDISP failed: {type(exc).__name__}: {exc}")
         f_disp.write_text(f"PERMDISP failed: {exc}\n", encoding="utf-8")
 
+    # ── PCoA supplementary figure ─────────────────────────────────────────────
+    # Principal Coordinates Analysis (PCoA / Classical MDS) is a metric
+    # ordination that faithfully represents Bray-Curtis distances better than
+    # 2D NMDS when stress is high (Kruskal stress-1 = 0.338 here).
+    # Provided as Supplementary Figure S1b for reviewer transparency.
+    f_pcoa = out_plots / "pcoa_supplementary.png"
+    try:
+        from sklearn.manifold import MDS as _MDS
+
+        pcoa = _MDS(
+            n_components=2,
+            metric_mds=True,          # metric = PCoA
+            metric="precomputed",
+            random_state=config["params"]["seed"],
+            max_iter=300,
+            n_init=1,
+            normalized_stress="auto",
+        )
+        pcoa_coords = pcoa.fit_transform(bray)
+        pcoa_scores = pd.DataFrame(
+            {"PCoA1": pcoa_coords[:, 0], "PCoA2": pcoa_coords[:, 1], "plot_id": plot_ids}
+        ).merge(env[["plot_id", "forest_type"]] if "forest_type" in env.columns else env[["plot_id"]], on="plot_id", how="left")
+
+        # Variance explained by each axis
+        eigenvalues = np.var(pcoa_coords, axis=0)
+        var_total = eigenvalues.sum()
+        pct1 = eigenvalues[0] / var_total * 100 if var_total > 0 else 0
+        pct2 = eigenvalues[1] / var_total * 100 if var_total > 0 else 0
+
+        with pub_style():
+            fig2, ax2 = plt.subplots(figsize=(7, 5.5))
+            if "forest_type" in pcoa_scores.columns:
+                unique_fts = sorted(pcoa_scores["forest_type"].dropna().astype(str).unique())
+                cmap = {ft: FOREST_PALETTE[i % len(FOREST_PALETTE)] for i, ft in enumerate(unique_fts)}
+                for ft in unique_fts:
+                    sub = pcoa_scores[pcoa_scores["forest_type"].astype(str) == ft]
+                    ax2.scatter(sub["PCoA1"], sub["PCoA2"], color=cmap[ft],
+                                s=18, alpha=0.65, linewidths=0, label=ft, rasterized=True)
+                ax2.legend(title="Forest type", bbox_to_anchor=(1.01, 1), loc="upper left",
+                           framealpha=0.9, edgecolor="0.8", ncol=1, fontsize=8)
+            else:
+                ax2.scatter(pcoa_scores["PCoA1"], pcoa_scores["PCoA2"],
+                            color=FOREST_PALETTE[0], s=18, alpha=0.65,
+                            linewidths=0, rasterized=True)
+            ax2.axhline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
+            ax2.axvline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
+            ax2.set_xlabel(f"PCoA1 ({pct1:.1f}% variance)")
+            ax2.set_ylabel(f"PCoA2 ({pct2:.1f}% variance)")
+            ax2.set_title(
+                "PCoA Ordination of Plot Species Composition\n"
+                "(Bray–Curtis dissimilarity; metric ordination, Supplementary)"
+            )
+            ax2.text(0.02, 0.02,
+                     "Metric PCoA provided as complement to NMDS\n"
+                     f"(NMDS Kruskal stress-1 = {kruskal_s1:.3f} > 0.20 threshold)",
+                     transform=ax2.transAxes, fontsize=8, va="bottom",
+                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.9))
+            fig2.tight_layout()
+            save_plot(fig2, f_pcoa)
+    except Exception as exc:
+        warnings.append(f"PCoA supplementary figure failed: {type(exc).__name__}: {exc}")
+
     return {
         "status": "success",
         "outputs": [str(f_scores_csv), str(f_scores_rds), str(f_summary),
-                    str(f_perm), str(f_disp)],
+                    str(f_perm), str(f_disp), str(f_pcoa)],
         "warnings": warnings,
         "runtime_sec": time.time() - t0,
     }
