@@ -11,6 +11,7 @@ from python.utils import (
     check_file,
     clean_sp_names,
     ensure_dirs,
+    flag_taxonomic_duplicates,
     make_species_matrix,
     save_pickle,
     standardize_columns,
@@ -63,6 +64,25 @@ def module_run(config: dict) -> dict:
     sp_mat = make_species_matrix(veg)
     save_pickle(config["paths"]["canonical"]["sp_mat_rds"], sp_mat)
 
+    # ── Taxonomic duplicate-candidate report ──────────────────────────────────
+    # Flag pairs of species names within the same genus that differ by ≤ 2
+    # characters (Levenshtein distance on the epithet).  These are potential
+    # typos or orthographic variants that inflate the species count artificially.
+    # The report requires MANUAL REVIEW before the final manuscript run.
+    out_taxa_dir = ensure_dirs("01_data_cleaning", config)
+    occ_counts   = (sp_mat > 0).sum(axis=0)  # n plots per species
+    species_in_data = sp_mat.columns.astype(str).tolist()
+    dup_df = flag_taxonomic_duplicates(species_in_data)
+    if not dup_df.empty:
+        dup_df["n_plots_a"] = dup_df["name_a"].map(
+            occ_counts.to_dict()).fillna(0).astype(int)
+        dup_df["n_plots_b"] = dup_df["name_b"].map(
+            occ_counts.to_dict()).fillna(0).astype(int)
+        dup_df = dup_df.sort_values(["genus", "edit_distance"])
+    f_taxa_dup = out_taxa_dir / "taxonomic_duplicate_candidates.csv"
+    dup_df.to_csv(f_taxa_dup, index=False)
+    n_dup_pairs = len(dup_df)
+
     plot_df = (
         veg[["plot_id", "longitude", "latitude"]]
         .drop_duplicates()
@@ -111,6 +131,7 @@ def module_run(config: dict) -> dict:
         str(config["paths"]["canonical"]["sp_mat_rds"]),
         str(config["paths"]["compatibility"]["vegetation_data_cleaned_csv"]),
         str(config["paths"]["compatibility"]["plot_coordinates_cleaned_csv"]),
+        str(f_taxa_dup),
     ]
     if config["paths"]["canonical"]["plot_points_gpkg"].exists():
         outputs.append(str(config["paths"]["canonical"]["plot_points_gpkg"]))
@@ -118,6 +139,12 @@ def module_run(config: dict) -> dict:
     missing_sheets = [s for s in wanted if s not in available]
     if missing_sheets:
         warnings.append(f"Missing expected sheets: {', '.join(missing_sheets)}")
+    if n_dup_pairs > 0:
+        warnings.append(
+            f"Taxonomic QC: {n_dup_pairs} near-duplicate species name pair(s) detected "
+            f"(Levenshtein ≤ 2 within genus). See taxonomic_duplicate_candidates.csv "
+            f"for manual review BEFORE final manuscript run."
+        )
 
     return {
         "status": "success",

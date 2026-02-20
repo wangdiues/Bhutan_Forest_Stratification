@@ -253,8 +253,10 @@ def module_run(config: dict) -> dict:
     else:
         warnings.append(f"Missing EVI CSV: {evi_path}")
 
-    env["lat_elevation_proxy"] = (env["latitude"] - env["latitude"].min()) * 1000
-    env["dist_from_center"] = np.sqrt((env["latitude"] - 27.5) ** 2 + (env["longitude"] - 90.5) ** 2)
+    # NOTE: synthetic spatial proxies (lat_elevation_proxy, dist_from_center) have been
+    # removed.  They were collinear with elevation and geographic position respectively,
+    # and their inclusion in constrained ordination (CCA) would inflate apparent
+    # explanatory power of the environmental matrix without ecological justification.
 
     env.to_csv(config["paths"]["canonical"]["env_master_csv"], index=False)
     save_pickle(config["paths"]["canonical"]["env_master_rds"], env)

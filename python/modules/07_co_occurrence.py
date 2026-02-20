@@ -10,6 +10,78 @@ import pandas as pd
 from python.utils import FOREST_PALETTE, check_file, ensure_dirs, load_pickle, pub_style, save_pickle, save_plot
 
 
+def _swap_shuffle(mat: np.ndarray, n_swaps: int, rng: np.random.Generator) -> np.ndarray:
+    """Curveball-style binary matrix swap preserving row and column marginals.
+
+    Each swap picks two rows and two columns that form a 2×2 checkerboard
+    pattern (one diagonal filled, the other empty) and flips them.
+    """
+    m = mat.copy()
+    n_rows, n_cols = m.shape
+    swaps_done = 0
+    attempts   = 0
+    max_tries  = n_swaps * 20
+    while swaps_done < n_swaps and attempts < max_tries:
+        attempts += 1
+        r1, r2 = rng.choice(n_rows, 2, replace=False)
+        c1, c2 = rng.choice(n_cols, 2, replace=False)
+        # Pattern A→B flip
+        if m[r1, c1] == 1 and m[r2, c2] == 1 and m[r1, c2] == 0 and m[r2, c1] == 0:
+            m[r1, c1] = 0; m[r2, c2] = 0
+            m[r1, c2] = 1; m[r2, c1] = 1
+            swaps_done += 1
+        # Pattern B→A flip
+        elif m[r1, c2] == 1 and m[r2, c1] == 1 and m[r1, c1] == 0 and m[r2, c2] == 0:
+            m[r1, c2] = 0; m[r2, c1] = 0
+            m[r1, c1] = 1; m[r2, c2] = 1
+            swaps_done += 1
+    return m
+
+
+def _null_modularity(binarized: np.ndarray, co_occ_floor: int,
+                     n_perms: int, seed: int) -> tuple[float, float, float]:
+    """Compute observed modularity Q and null-model SES via swap permutations.
+
+    Returns (obs_Q, ses, p_value_greater_than_null).
+    p_value: fraction of null Q >= observed Q (one-tailed, upper).
+    """
+    rng = np.random.default_rng(seed)
+    n_swaps = max(binarized.shape[0] * 10, 1000)
+
+    def _build_q(mat: np.ndarray) -> float:
+        adj = mat.T @ mat
+        np.fill_diagonal(adj, 0)
+        g = nx.Graph()
+        rows, cols = np.where(np.triu(adj >= co_occ_floor, k=1))
+        for i, j in zip(rows, cols):
+            g.add_edge(i, j, weight=int(adj[i, j]))
+        if g.number_of_edges() == 0:
+            return float("nan")
+        coms = list(nx.algorithms.community.greedy_modularity_communities(g))
+        return float(nx.algorithms.community.modularity(g, coms))
+
+    obs_q = _build_q(binarized)
+    if not np.isfinite(obs_q):
+        return obs_q, float("nan"), float("nan")
+
+    null_qs = []
+    for _ in range(n_perms):
+        shuffled = _swap_shuffle(binarized, n_swaps, rng)
+        q = _build_q(shuffled)
+        if np.isfinite(q):
+            null_qs.append(q)
+
+    if not null_qs:
+        return obs_q, float("nan"), float("nan")
+
+    null_arr  = np.array(null_qs)
+    null_mean = float(null_arr.mean())
+    null_std  = float(null_arr.std())
+    ses = (obs_q - null_mean) / null_std if null_std > 0 else float("nan")
+    p_val = float(np.mean(null_arr >= obs_q))   # fraction of null >= obs
+    return obs_q, ses, p_val
+
+
 def module_run(config: dict) -> dict:
     t0 = time.time()
     out_root = ensure_dirs("07_co_occurrence", config)
@@ -30,6 +102,13 @@ def module_run(config: dict) -> dict:
     keep_species = (X > 0).sum(axis=0) >= config["params"]["min_species_occurrence"]
     X2 = X[:, keep_species]
     names2 = species_names[keep_species]
+
+    # Remove ambiguous / unidentified taxa — not real plant species
+    import re as _re
+    _ambig_pat = _re.compile(r'(?i)(unknown|not.?listed|unidentified|indet)')
+    _keep_named = ~pd.Series(names2.astype(str)).str.contains(_ambig_pat, na=False).values
+    X2 = X2[:, _keep_named]
+    names2 = names2[_keep_named]
 
     if X2.shape[1] < 2:
         raise RuntimeError("Not enough species pass minimum occurrence threshold for co-occurrence analysis.")
@@ -74,13 +153,43 @@ def module_run(config: dict) -> dict:
         [{"from": u, "to": v, "weight": d.get("weight", 1)} for u, v, d in g.edges(data=True)]
     )
 
-    f_nodes = out_tables / "network_node_metrics.csv"
-    f_edges = out_tables / "network_edges.csv"
-    f_graph = out_models / "co_occurrence_graph.rds"
+    # ── Modularity Q and null-model SES ──────────────────────────────────────
+    communities_full = list(nx.algorithms.community.greedy_modularity_communities(g))
+    obs_q = float(nx.algorithms.community.modularity(g, communities_full))
+
+    n_null_perms = min(99, config["params"].get("permutations", 99))
+    null_seed    = config["params"].get("seed", 42)
+    obs_q2, ses, null_p = _null_modularity(
+        binarized, co_occ_floor, n_null_perms, null_seed
+    )
+
+    f_nodes   = out_tables / "network_node_metrics.csv"
+    f_edges   = out_tables / "network_edges.csv"
+    f_graph   = out_models / "co_occurrence_graph.rds"
+    f_summary = out_tables / "network_summary.csv"
 
     node_tbl.to_csv(f_nodes, index=False)
     edge_tbl.to_csv(f_edges, index=False)
     save_pickle(f_graph, g)
+
+    net_summary = pd.DataFrame([{
+        "n_species_nodes": g.number_of_nodes(),
+        "n_edges":         g.number_of_edges(),
+        "n_communities":   len(communities_full),
+        "modularity_Q":    round(obs_q, 4),
+        "null_model_n_permutations": n_null_perms,
+        "null_model_SES":  round(ses, 3) if np.isfinite(ses) else float("nan"),
+        "null_model_p_value": round(null_p, 3) if np.isfinite(null_p) else float("nan"),
+        "mean_degree":     round(float(np.mean(list(dict(g.degree()).values()))), 2),
+        "note": (
+            "Edges are co-occurrence counts (shared plots), not ecological interactions. "
+            "Ambiguous/unidentified taxa (Unknown*, Not listed) excluded before network "
+            "construction. Null model uses swap permutations preserving species occupancy "
+            "and plot richness marginals (n_swaps = n_rows * 10 per permutation). "
+            "SES = (obs_Q - null_mean) / null_sd; p = P(null_Q >= obs_Q)."
+        ),
+    }])
+    net_summary.to_csv(f_summary, index=False)
 
     # --- Visualisation: trim to top-60 nodes by degree for readability ---
     TOP_N = 60
@@ -153,7 +262,7 @@ def module_run(config: dict) -> dict:
 
     return {
         "status": "success",
-        "outputs": [str(f_nodes), str(f_edges), str(f_graph)],
+        "outputs": [str(f_nodes), str(f_edges), str(f_graph), str(f_summary)],
         "warnings": [],
         "runtime_sec": time.time() - t0,
     }

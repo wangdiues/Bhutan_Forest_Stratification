@@ -62,7 +62,7 @@ def module_run(config: dict) -> dict:
     ind = _calc_indval(X_use, grp_use, species_names)
 
     rng = np.random.default_rng(config["params"]["seed"])
-    n_perm = min(199, int(config["params"]["permutations"]))
+    n_perm = int(config["params"]["permutations"])   # use full permutation count (e.g. 999)
     p_vals = []
     for row in ind.itertuples():
         obs = row.stat

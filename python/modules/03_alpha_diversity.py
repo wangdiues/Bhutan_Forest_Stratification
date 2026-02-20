@@ -96,6 +96,60 @@ def module_run(config: dict) -> dict:
     save_pickle(f_data_rds, alpha_full)
     alpha_full.to_csv(f_table, index=False)
 
+    # ── Kruskal-Wallis test across 500-m elevation bands ─────────────────────
+    # Statistically justifies the use of fixed 500-m bands by confirming that
+    # at least one band has a significantly different richness distribution.
+    _ELEV_BINS   = [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 6000]
+    _ELEV_LABELS = ["<500 m", "500–1k m", "1k–1.5k m", "1.5k–2k m",
+                    "2k–2.5k m", "2.5k–3k m", "3k–3.5k m", "3.5k–4k m", ">4k m"]
+    if "elevation" in alpha_full.columns:
+        el = pd.to_numeric(alpha_full["elevation"], errors="coerce")
+        ri = pd.to_numeric(alpha_full["richness"],  errors="coerce")
+        ok = el.notna() & ri.notna()
+        elev_band = pd.cut(el[ok], bins=_ELEV_BINS, labels=_ELEV_LABELS, right=False)
+        band_groups = [
+            ri[ok][elev_band == lb].values
+            for lb in _ELEV_LABELS
+            if (elev_band == lb).sum() >= 3
+        ]
+        kw_rows = []
+        if len(band_groups) >= 2:
+            h_stat, kw_p = _stats.kruskal(*band_groups)
+            # Eta-squared effect size: η² = (H - k + 1) / (n - k)
+            n_total = int(ok.sum())
+            k_groups = len(band_groups)
+            eta2 = (h_stat - k_groups + 1) / (n_total - k_groups)
+            kw_rows.append({
+                "test": "Kruskal-Wallis H",
+                "H_statistic": round(float(h_stat), 4),
+                "p_value":     float(kw_p),
+                "eta_squared": round(float(eta2), 4),
+                "n_bands":     k_groups,
+                "n_plots":     n_total,
+                "interpretation": (
+                    "Significant differences across elevation bands — "
+                    "500-m banding captures real richness variation."
+                    if kw_p < 0.05
+                    else "No significant differences across elevation bands."
+                ),
+            })
+        # Band-level summary: n, mean richness, SD
+        band_summary_rows = []
+        for lb in _ELEV_LABELS:
+            mask = (elev_band == lb) if ok.any() else pd.Series(dtype=bool)
+            vals = ri[ok][elev_band == lb].values if ok.any() else np.array([])
+            band_summary_rows.append({
+                "elevation_band": lb,
+                "n_plots": len(vals),
+                "mean_richness": round(float(np.mean(vals)), 2) if len(vals) else float("nan"),
+                "sd_richness":   round(float(np.std(vals, ddof=1)), 2) if len(vals) > 1 else float("nan"),
+                "median_richness": round(float(np.median(vals)), 2) if len(vals) else float("nan"),
+            })
+        kw_out = out_tables / "elevation_band_kruskal_wallis.csv"
+        band_out = out_tables / "elevation_band_richness_summary.csv"
+        pd.DataFrame(kw_rows).to_csv(kw_out, index=False)
+        pd.DataFrame(band_summary_rows).to_csv(band_out, index=False)
+
     if "elevation" in alpha_full.columns:
         x = pd.to_numeric(alpha_full["elevation"], errors="coerce")
         y = pd.to_numeric(alpha_full["richness"], errors="coerce")

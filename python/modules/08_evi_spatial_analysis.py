@@ -190,10 +190,11 @@ def _plot_slope_vs_elevation(df: pd.DataFrame, out_path) -> None:
 
         ax.axhline(0, color="0.35", lw=1.1, ls="--", zorder=3)
 
-        ax.annotate(f"Pearson r = {r:.3f},  {p_str}  (n = {len(sub):,})",
-                    xy=(0.02, 0.97), xycoords="axes fraction", va="top", fontsize=10,
-                    bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
-                              edgecolor="0.55", alpha=0.94))
+        ax.annotate(
+            f"Pearson r = {r:.3f},  R² = {r**2:.4f},  {p_str}  (n = {len(sub):,})",
+            xy=(0.02, 0.97), xycoords="axes fraction", va="top", fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                      edgecolor="0.55", alpha=0.94))
 
         ax.set_title("EVI Trend Slope vs Elevation — NFI Plots  (MODIS, 2000–2024)",
                      fontweight="bold", fontsize=12, pad=8)
@@ -303,11 +304,12 @@ def _plot_slope_vs_richness_sci(df: pd.DataFrame, out_path) -> None:
                     label="OLS regression ± 95% CI")
 
             p_str = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
-            ax.annotate(f"Pearson r = {r:.3f}\n{p_str}\nn = {len(sub):,}",
-                        xy=(0.04, 0.97), xycoords="axes fraction",
-                        va="top", fontsize=10,
-                        bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
-                                  edgecolor="0.55", alpha=0.95))
+            ax.annotate(
+                f"Pearson r = {r:.3f},  R² = {r**2:.4f}\n{p_str}\nn = {len(sub):,}",
+                xy=(0.04, 0.97), xycoords="axes fraction",
+                va="top", fontsize=10,
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                          edgecolor="0.55", alpha=0.95))
 
             ax.axhline(0, color="0.4", lw=0.9, ls="--")
             ax.set_xlabel(xlabel, labelpad=4)
@@ -511,11 +513,12 @@ def _plot_integrated_panel(df: pd.DataFrame, sen_path, mk_path,
         xr = np.linspace(sub_r["richness"].min(), sub_r["richness"].max(), 300)
         ax_rich.plot(xr, m * xr + b, color="#C0392B", lw=2.0, zorder=5)
         p_str = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
-        ax_rich.annotate(f"r = {r:.3f},  {p_str}\nn = {len(sub_r):,}",
-                         xy=(0.04, 0.97), xycoords="axes fraction",
-                         va="top", fontsize=9.5,
-                         bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
-                                   edgecolor="0.55", alpha=0.95))
+        ax_rich.annotate(
+            f"r = {r:.3f},  R² = {r**2:.4f}\n{p_str}\nn = {len(sub_r):,}",
+            xy=(0.04, 0.97), xycoords="axes fraction",
+            va="top", fontsize=9.5,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                      edgecolor="0.55", alpha=0.95))
         ax_rich.axhline(0, color="0.4", lw=0.9, ls="--")
         ax_rich.set_xlabel("Species richness (S)", labelpad=3)
         ax_rich.set_ylabel("EVI slope  (EVI yr⁻¹)", labelpad=3)
@@ -629,11 +632,17 @@ def module_run(config: dict) -> dict:
     outputs.append(str(out_elev))
 
     # ── Forest type summary ───────────────────────────────────────────────────
-    ft_grp = (master.dropna(subset=["sen_slope", "forest_type"])
-              .groupby("forest_type"))
+    ft_sub = master.dropna(subset=["sen_slope", "forest_type"])
+    ft_grp = ft_sub.groupby("forest_type")
     ft_summary = ft_grp["sen_slope"].agg(
         n="count", mean="mean", median="median", std="std",
-        pct_greening=lambda x: (x > 0).mean() * 100,
+        pct_positive_slope=lambda x: (x > 0).mean() * 100,
+        pct_sig_greening=lambda x: (
+            (x > 0) & (ft_sub.loc[x.index, "mk_p"] <= 0.05)
+        ).mean() * 100,
+        pct_sig_browning=lambda x: (
+            (x < 0) & (ft_sub.loc[x.index, "mk_p"] <= 0.05)
+        ).mean() * 100,
     ).reset_index().sort_values("median", ascending=False)
     out_ft = out_tables / "evi_by_forest_type.csv"
     ft_summary.to_csv(out_ft, index=False)
@@ -644,30 +653,95 @@ def module_run(config: dict) -> dict:
         import rasterio
         slope_arr, pval_arr, _ = _load_rasters(sen_path, mk_path)
         with rasterio.open(sen_path) as src:
-            pixel_area_km2 = abs(src.res[0] * src.res[1]) * (111_320 ** 2) / 1e6
+            lon_res_deg = abs(src.res[0])   # degrees per pixel (x / longitude)
+            lat_res_deg = abs(src.res[1])   # degrees per pixel (y / latitude)
+            # Pixel centre latitude for area correction (use raster centre)
+            centre_lat_rad = np.deg2rad(
+                (src.bounds.bottom + src.bounds.top) / 2.0
+            )
+            # 1° latitude ≈ 111,320 m (constant)
+            # 1° longitude ≈ 111,320 * cos(lat) m (varies with latitude)
+            m_per_deg_lat = 111_320.0
+            m_per_deg_lon = 111_320.0 * np.cos(centre_lat_rad)
+            pixel_area_km2 = (
+                lat_res_deg * m_per_deg_lat *
+                lon_res_deg * m_per_deg_lon
+            ) / 1e6
 
         valid_mask = np.isfinite(slope_arr) & np.isfinite(pval_arr)
         n_valid  = int(valid_mask.sum())
+
+        # ── Uncorrected statistics (α = 0.05) ────────────────────────────────
         n_green  = int(((slope_arr > 0) & (pval_arr <= 0.05) & valid_mask).sum())
         n_brown  = int(((slope_arr < 0) & (pval_arr <= 0.05) & valid_mask).sum())
         n_stable = n_valid - n_green - n_brown
+
+        # ── Benjamini-Hochberg FDR correction ────────────────────────────────
+        # Multiple testing across ~700k simultaneous pixel tests.
+        # BH controls the expected proportion of false discoveries (FDR ≤ 5%).
+        # Manual implementation to avoid scipy version dependency.
+        valid_pvals_flat = pval_arr[valid_mask].ravel()
+        n_tests = len(valid_pvals_flat)
+        sorted_idx  = np.argsort(valid_pvals_flat)
+        sorted_pv   = valid_pvals_flat[sorted_idx]
+        # BH adjusted p-values: p_adj[i] = min(p[i] * n / rank, 1)
+        # Make monotone from the right (ensures FDR monotonicity)
+        adj_pv = np.minimum(1.0, sorted_pv * n_tests / (np.arange(1, n_tests + 1)))
+        adj_pv = np.minimum.accumulate(adj_pv[::-1])[::-1]
+        padj_flat = np.empty(n_tests)
+        padj_flat[sorted_idx] = adj_pv
+
+        # Reconstruct FDR-corrected p-value array (same shape as slope_arr)
+        pval_fdr = np.full(slope_arr.shape, np.nan)
+        pval_fdr[valid_mask] = padj_flat
+
+        n_green_fdr  = int(((slope_arr > 0) & (pval_fdr <= 0.05) & valid_mask).sum())
+        n_brown_fdr  = int(((slope_arr < 0) & (pval_fdr <= 0.05) & valid_mask).sum())
+        n_stable_fdr = n_valid - n_green_fdr - n_brown_fdr
+
+        def _row(cat, n, n_tot, pxa):
+            return {
+                "category": cat,
+                "n_pixels":      n,
+                "area_km2":      round(n * pxa, 1),
+                "pct_valid_area": round(n / n_tot * 100, 2) if n_tot > 0 else 0.0,
+            }
+
         area_stats = pd.DataFrame([
-            {"category": "Significant greening (p≤0.05)",
-             "n_pixels": n_green,  "area_km2": round(n_green  * pixel_area_km2, 1),
-             "pct_valid_area": round(n_green / n_valid * 100, 2)},
-            {"category": "Significant browning (p≤0.05)",
-             "n_pixels": n_brown,  "area_km2": round(n_brown  * pixel_area_km2, 1),
-             "pct_valid_area": round(n_brown / n_valid * 100, 2)},
-            {"category": "Stable / non-significant",
-             "n_pixels": n_stable, "area_km2": round(n_stable * pixel_area_km2, 1),
-             "pct_valid_area": round(n_stable / n_valid * 100, 2)},
-            {"category": "Total valid",
-             "n_pixels": n_valid,  "area_km2": round(n_valid  * pixel_area_km2, 1),
-             "pct_valid_area": 100.0},
+            # Uncorrected block
+            {"section": "Uncorrected (nominal α=0.05)",
+             **_row("Significant greening", n_green,  n_valid, pixel_area_km2)},
+            {"section": "Uncorrected (nominal α=0.05)",
+             **_row("Significant browning", n_brown,  n_valid, pixel_area_km2)},
+            {"section": "Uncorrected (nominal α=0.05)",
+             **_row("Stable / non-significant", n_stable, n_valid, pixel_area_km2)},
+            {"section": "Uncorrected (nominal α=0.05)",
+             **_row("Total valid", n_valid, n_valid, pixel_area_km2)},
+            # FDR-corrected block
+            {"section": "FDR-corrected (BH, FDR≤0.05)",
+             **_row("Significant greening", n_green_fdr,  n_valid, pixel_area_km2)},
+            {"section": "FDR-corrected (BH, FDR≤0.05)",
+             **_row("Significant browning", n_brown_fdr,  n_valid, pixel_area_km2)},
+            {"section": "FDR-corrected (BH, FDR≤0.05)",
+             **_row("Stable / non-significant", n_stable_fdr, n_valid, pixel_area_km2)},
+            {"section": "FDR-corrected (BH, FDR≤0.05)",
+             **_row("Total valid", n_valid, n_valid, pixel_area_km2)},
         ])
         out_area = out_tables / "evi_area_stats.csv"
         area_stats.to_csv(out_area, index=False)
         outputs.append(str(out_area))
+        warn_list.append(
+            f"Pixel-level stats: uncorrected p≤0.05 → {n_green/n_valid*100:.1f}% greening; "
+            f"BH FDR-corrected → {n_green_fdr/n_valid*100:.1f}% greening. "
+            f"Report FDR-corrected figures in manuscript."
+        )
+
+        # NOTE: Per-plot trend_class retains the nominal p-value (α=0.05).
+        # Pixel-level FDR correction is computationally intensive to interpolate
+        # back to plot coordinates and is reported at the raster level only
+        # (evi_area_stats.csv).  The manuscript should cite FDR-corrected figures
+        # for areal statements and nominal p for per-plot analyses, with this
+        # distinction clearly stated in Methods.
     except Exception as exc:
         warn_list.append(f"Pixel-level area stats failed: {type(exc).__name__}: {exc}")
 

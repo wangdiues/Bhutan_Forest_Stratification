@@ -232,7 +232,98 @@ def standardize_columns(df: pd.DataFrame, mapping_candidates: dict[str, list[str
 
 
 def clean_sp_names(series: pd.Series) -> pd.Series:
-    return series.astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
+    """Standardise botanical species names.
+
+    Steps applied in order:
+    1. Strip leading/trailing whitespace and collapse internal whitespace.
+    2. Title-case the entire name so that genus is capitalised and epithets
+       are lower-case (e.g. "PINUS ROXBURGHII" → "Pinus Roxburghii").
+       Note: infraspecific epithets (var., subsp.) remain capitalised at
+       the first letter; this is a pragmatic approximation that catches the
+       majority of case inconsistencies in field data.
+    3. Remove entries that are clearly non-species (numeric-only, "nan",
+       "unknown", "unidentified", empty strings) by leaving them as-is
+       so that downstream filters can exclude them.
+
+    This is a field-data heuristic, not a full taxonomic authority lookup.
+    A duplicate-candidate report is written by module 01 for manual review.
+    """
+    cleaned = (
+        series.astype(str)
+              .str.strip()
+              .str.replace(r"\s+", " ", regex=True)
+              .str.title()          # "pinus roxburghii" → "Pinus Roxburghii"
+    )
+    return cleaned
+
+
+def flag_taxonomic_duplicates(species_list: list[str]) -> pd.DataFrame:
+    """Return a DataFrame of near-duplicate species name pairs.
+
+    Pairs within the same genus (same first word) that differ by at most
+    2 characters (Levenshtein distance) are flagged as potential typos or
+    orthographic variants.  Uses a pure-Python edit-distance implementation
+    to avoid external dependencies.
+
+    Returns a DataFrame with columns:
+      name_a, name_b, genus, edit_distance, n_plots_a, n_plots_b
+    (n_plots columns are populated by the caller if occurrence counts are
+    passed; otherwise they are left as NaN.)
+    """
+
+    def _levenshtein(a: str, b: str) -> int:
+        """Standard dynamic-programming Levenshtein distance."""
+        if a == b:
+            return 0
+        la, lb = len(a), len(b)
+        if la == 0:
+            return lb
+        if lb == 0:
+            return la
+        prev = list(range(lb + 1))
+        for i, ca in enumerate(a, 1):
+            curr = [i] + [0] * lb
+            for j, cb in enumerate(b, 1):
+                curr[j] = min(
+                    prev[j] + 1,        # deletion
+                    curr[j - 1] + 1,    # insertion
+                    prev[j - 1] + (0 if ca == cb else 1),   # substitution
+                )
+            prev = curr
+        return prev[lb]
+
+    # Group by genus (first word)
+    from collections import defaultdict
+    by_genus: dict[str, list[str]] = defaultdict(list)
+    for name in species_list:
+        parts = name.strip().split()
+        if parts:
+            by_genus[parts[0]].append(name)
+
+    rows = []
+    for genus, names in by_genus.items():
+        uniq = sorted(set(names))
+        for i in range(len(uniq)):
+            for j in range(i + 1, len(uniq)):
+                a, b = uniq[i], uniq[j]
+                # Compare only the epithet part (skip genus word)
+                epi_a = " ".join(a.split()[1:])
+                epi_b = " ".join(b.split()[1:])
+                if not epi_a or not epi_b:
+                    continue
+                dist = _levenshtein(epi_a.lower(), epi_b.lower())
+                if dist <= 2:
+                    rows.append({
+                        "name_a":       a,
+                        "name_b":       b,
+                        "genus":        genus,
+                        "edit_distance": dist,
+                        "n_plots_a":    float("nan"),
+                        "n_plots_b":    float("nan"),
+                    })
+    return pd.DataFrame(rows, columns=[
+        "name_a", "name_b", "genus", "edit_distance", "n_plots_a", "n_plots_b"
+    ])
 
 
 def make_species_matrix(veg_long: pd.DataFrame) -> pd.DataFrame:

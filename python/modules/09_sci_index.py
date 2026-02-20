@@ -3,7 +3,9 @@ from __future__ import annotations
 import time
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from scipy import stats as _stats
 
 from python.utils import check_file, ensure_dirs, pub_style, safe_z, save_plot
 
@@ -44,8 +46,50 @@ def module_run(config: dict) -> dict:
     z_cols = [c for c in sci.columns if c.startswith("z_")]
     sci["sci_index"] = sci[z_cols].sum(axis=1, skipna=True)
 
-    out_tbl = out_tables / "stratification_complexity_index.csv"
+    out_tbl    = out_tables / "stratification_complexity_index.csv"
+    out_corr   = out_tables / "sci_component_correlations.csv"
+    out_sens   = out_tables / "sci_sensitivity_analysis.csv"
     sci.to_csv(out_tbl, index=False)
+
+    # ── Component correlation matrix (Spearman) ───────────────────────────────
+    z_data = sci[z_cols].dropna()
+    if len(z_data) > 3 and len(z_cols) > 1:
+        corr_rows = []
+        for i, ca in enumerate(z_cols):
+            for cb in z_cols[i + 1:]:
+                r, p = _stats.spearmanr(z_data[ca], z_data[cb])
+                corr_rows.append({
+                    "component_a": ca,
+                    "component_b": cb,
+                    "spearman_r":  round(float(r), 4),
+                    "p_value":     round(float(p), 6),
+                })
+        pd.DataFrame(corr_rows).to_csv(out_corr, index=False)
+
+    # ── Leave-one-out sensitivity analysis ───────────────────────────────────
+    # For each component, remove it, recompute SCI, measure Spearman r with full SCI.
+    # High r → component is redundant / SCI is robust without it.
+    # Low r → component is influential / its removal destabilises rankings.
+    sens_rows = []
+    full_sci = sci["sci_index"].dropna()
+    for drop_col in z_cols:
+        remaining = [c for c in z_cols if c != drop_col]
+        if not remaining:
+            continue
+        sci_loo = sci[remaining].sum(axis=1, skipna=True)
+        valid = full_sci.notna() & sci_loo.notna()
+        r, p = _stats.spearmanr(full_sci[valid], sci_loo[valid])
+        sens_rows.append({
+            "component_dropped": drop_col,
+            "spearman_r_with_full_sci": round(float(r), 4),
+            "p_value": round(float(p), 6),
+            "interpretation": (
+                "robust (r ≥ 0.95)" if r >= 0.95
+                else "moderate sensitivity (0.90 ≤ r < 0.95)" if r >= 0.90
+                else "sensitive (r < 0.90)"
+            ),
+        })
+    pd.DataFrame(sens_rows).to_csv(out_sens, index=False)
 
     if {"longitude", "latitude"}.issubset(sci.columns):
         with pub_style():
@@ -75,7 +119,7 @@ def module_run(config: dict) -> dict:
 
     return {
         "status": "success",
-        "outputs": [str(out_tbl)],
+        "outputs": [str(out_tbl), str(out_corr), str(out_sens)],
         "warnings": [],
         "runtime_sec": time.time() - t0,
     }
