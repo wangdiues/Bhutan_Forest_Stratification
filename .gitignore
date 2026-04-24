@@ -50,6 +50,17 @@ docs/
 context/
 docker/
 
+# ── Internal/meta files not for public repo ───────────────────────────────
+CLAUDE.md
+CODE_OF_CONDUCT.md
+COMPLETE_SUMMARY.md
+CONTRIBUTING.md
+FINAL_STATUS.md
+PROJECT_OVERVIEW.md
+REPOSITORY_STATUS.md
+ROADMAP.md
+SECURITY.md
+
 # ── Manuscripts: exclude all drafts/working files ────────────────────────
 # Allow only final submitted PDFs; everything else stays local
 manuscripts/*
