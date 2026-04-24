@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from statsmodels.stats.multitest import multipletests
+
 from python.utils import check_file, ensure_dirs, load_pickle, pub_style, save_plot
 
 
@@ -82,6 +84,13 @@ def module_run(config: dict) -> dict:
         p_vals.append((count + 1) / (n_perm + 1))
     ind["p.value"] = p_vals
 
+    # Benjamini-Hochberg FDR correction across all species-group tests.
+    # With ~2,200 species × 12 forest types, uncorrected p ≤ 0.05 produces
+    # ~1,300 expected false positives. FDR control is required for publication.
+    ind["p.value.raw"] = ind["p.value"].copy()
+    _, fdr_pvals, _, _ = multipletests(ind["p.value"].values, method="fdr_bh")
+    ind["p.value"] = fdr_pvals
+
     groups = sorted(np.unique(grp_use).tolist())
     for g in groups:
         ind[f"s.{g}"] = (ind["group"] == g).astype(int)
@@ -89,7 +98,7 @@ def module_run(config: dict) -> dict:
     sig = ind[ind["p.value"] <= 0.05].copy()
     f_main = out_tables / "indicator_species_by_forest_type.csv"
     f_detailed = out_tables / "indicator_species_detailed.csv"
-    sig.to_csv(f_detailed, index=False)
+    ind.to_csv(f_detailed, index=False)  # Full table with both raw and FDR p-values
 
     warnings = []
     if len(sig) > 0:
@@ -127,7 +136,7 @@ def module_run(config: dict) -> dict:
                                    fontsize=8)
                 ax.set_xticks(range(n_grp))
                 ax.set_xticklabels(pivot.columns, rotation=40, ha="right", fontsize=8.5)
-                ax.set_title("Top 5 Indicator Species per Forest Type\n(IndVal statistic, p ≤ 0.05)",
+                ax.set_title("Top 5 Indicator Species per Forest Type\n(IndVal statistic, FDR-corrected p ≤ 0.05)",
                              pad=10)
                 ax.tick_params(axis="both", which="both", length=0)
 

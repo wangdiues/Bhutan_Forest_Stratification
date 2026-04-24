@@ -61,6 +61,24 @@ def _sample_stack_mean(path, coords: list[tuple[float, float]]) -> tuple[np.ndar
     return mean_evi, raw[:, 0], raw[:, n_bands - 1]
 
 
+def _mk_var_with_ties(series: np.ndarray) -> float:
+    """Tie-corrected Mann-Kendall variance (A6 — Hussain & Mahmud, 2019).
+
+    Var(S) = [n(n−1)(2n+5) − Σ_t t(t−1)(2t+5)] / 18
+    where t is the count of tied observations in each tie group.
+    """
+    from collections import Counter
+    n = len(series)
+    base = n * (n - 1) * (2 * n + 5)
+    tie_counts = Counter(series)
+    tie_corr = sum(
+        t * (t - 1) * (2 * t + 5)
+        for t in tie_counts.values()
+        if t > 1
+    )
+    return (base - tie_corr) / 18.0
+
+
 def _mk_tau_to_pvalue(tau: np.ndarray, n: int = 25) -> np.ndarray:
     """Compute two-tailed Mann-Kendall p-value from tau using normal approximation.
 
@@ -69,6 +87,8 @@ def _mk_tau_to_pvalue(tau: np.ndarray, n: int = 25) -> np.ndarray:
       S      = tau * n(n-1) / 2
       Z      = (S ∓ 1) / sqrt(Var(S))   (continuity correction)
       p      = 2 * (1 - Phi(|Z|))
+    Note: if raw EVI time series are available use _mk_var_with_ties() for
+    tie-corrected variance (A6). This function is a fallback from tau only.
     """
     var_s = n * (n - 1) * (2 * n + 5) / 18.0
     s_stat = tau * n * (n - 1) / 2.0
@@ -149,8 +169,8 @@ def _plot_slope_vs_elevation(df: pd.DataFrame, out_path) -> None:
     sub["roll_mean"] = (sub["sen_slope"]
                         .rolling(window=120, center=True, min_periods=30).mean())
 
-    # Pearson correlation
-    r, p = stats.pearsonr(sub["elevation"], sub["sen_slope"])
+    # A10: Spearman rho (EVI slopes and richness are right-skewed)
+    r, p = stats.spearmanr(sub["elevation"], sub["sen_slope"], nan_policy="omit")
     p_str = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
 
     with pub_style(font_size=11):
@@ -191,7 +211,7 @@ def _plot_slope_vs_elevation(df: pd.DataFrame, out_path) -> None:
         ax.axhline(0, color="0.35", lw=1.1, ls="--", zorder=3)
 
         ax.annotate(
-            f"Pearson r = {r:.3f},  R² = {r**2:.4f},  {p_str}  (n = {len(sub):,})",
+            f"Spearman ρ = {r:.3f},  ρ² = {r**2:.4f},  {p_str}  (n = {len(sub):,})",
             xy=(0.02, 0.97), xycoords="axes fraction", va="top", fontsize=10,
             bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
                       edgecolor="0.55", alpha=0.94))
@@ -281,8 +301,8 @@ def _plot_slope_vs_richness_sci(df: pd.DataFrame, out_path) -> None:
             cb.set_label("Elevation (m a.s.l.)", fontsize=9)
             cb.ax.tick_params(labelsize=8)
 
-            # OLS regression with 95% CI band
-            r, p = stats.pearsonr(sub[col], sub["sen_slope"])
+            # A10: Spearman rho for skewed distributions; OLS line for visualization
+            r, p = stats.spearmanr(sub[col], sub["sen_slope"], nan_policy="omit")
             m, b = np.polyfit(sub[col], sub["sen_slope"], 1)
             x_range = np.linspace(sub[col].min(), sub[col].max(), 300)
             y_fit = m * x_range + b
@@ -305,7 +325,7 @@ def _plot_slope_vs_richness_sci(df: pd.DataFrame, out_path) -> None:
 
             p_str = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
             ax.annotate(
-                f"Pearson r = {r:.3f},  R² = {r**2:.4f}\n{p_str}\nn = {len(sub):,}",
+                f"Spearman ρ = {r:.3f},  ρ² = {r**2:.4f}\n{p_str}\nn = {len(sub):,}",
                 xy=(0.04, 0.97), xycoords="axes fraction",
                 va="top", fontsize=10,
                 bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
@@ -508,13 +528,14 @@ def _plot_integrated_panel(df: pd.DataFrame, sen_path, mk_path,
         cb.set_label("Elevation (m a.s.l.)", fontsize=8.5)
         cb.ax.tick_params(labelsize=8)
 
-        r, p = stats.pearsonr(sub_r["richness"], sub_r["sen_slope"])
+        # A10: Spearman rho for skewed data; OLS line shown for visualization only
+        r, p = stats.spearmanr(sub_r["richness"], sub_r["sen_slope"], nan_policy="omit")
         m, b = np.polyfit(sub_r["richness"], sub_r["sen_slope"], 1)
         xr = np.linspace(sub_r["richness"].min(), sub_r["richness"].max(), 300)
         ax_rich.plot(xr, m * xr + b, color="#C0392B", lw=2.0, zorder=5)
         p_str = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
         ax_rich.annotate(
-            f"r = {r:.3f},  R² = {r**2:.4f}\n{p_str}\nn = {len(sub_r):,}",
+            f"Spearman ρ = {r:.3f},  ρ² = {r**2:.4f}\n{p_str}\nn = {len(sub_r):,}",
             xy=(0.04, 0.97), xycoords="axes fraction",
             va="top", fontsize=9.5,
             bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
@@ -744,6 +765,120 @@ def module_run(config: dict) -> dict:
         # distinction clearly stated in Methods.
     except Exception as exc:
         warn_list.append(f"Pixel-level area stats failed: {type(exc).__name__}: {exc}")
+
+    # ── B5: Moran's I spatial autocorrelation on MK p-value raster ───────────
+    # Tests whether significant-trend pixels cluster in space.
+    # Uses systematic 1-in-10 pixel subsample (~7 k points) for tractability.
+    f_morans = out_tables / "morans_i_results.csv"
+    try:
+        import rasterio as _rio
+        with _rio.open(mk_path) as _src:
+            _tau_rast = _src.read(1).astype(float)
+            _pv_raw   = _src.read(2).astype(float)
+            _res      = abs(_src.res[0])  # degrees per pixel
+        _pv_raw[~np.isfinite(_pv_raw)] = np.nan
+        # Fall back to analytical p-values when band 2 is all NaN (A6 fix)
+        if np.all(np.isnan(_pv_raw)):
+            _tau_rast[~np.isfinite(_tau_rast)] = np.nan
+            _pv_raw = _mk_tau_to_pvalue(_tau_rast, n=25)
+            warn_list.append(
+                "Moran's I: MK p-value band all NaN; using analytically-derived "
+                "p-values from tau raster for spatial autocorrelation test."
+            )
+        _nrow, _ncol = _pv_raw.shape
+
+        # Subsample every 10th row and column
+        _row_idx = np.arange(0, _nrow, 10)
+        _col_idx = np.arange(0, _ncol, 10)
+        _grid = _pv_raw[np.ix_(_row_idx, _col_idx)]
+        _valid = np.isfinite(_grid)
+        _nr, _nc = _grid.shape
+
+        def _morans_i_rook(arr2d: np.ndarray) -> dict:
+            """Compute global Moran's I with rook contiguity weights."""
+            _y = arr2d.copy()
+            _valid_m = np.isfinite(_y)
+            _y[~_valid_m] = 0.0
+            _n = _valid_m.sum()
+            if _n < 10:
+                return {"moran_i": float("nan"), "z_score": float("nan"),
+                        "p_value": float("nan"), "n_cells": int(_n)}
+            _y_vals = _y[_valid_m]
+            _y_c = _y_vals - _y_vals.mean()
+            _nr2, _nc2 = _y.shape
+            # Build spatial lag (rook: 4-connectivity)
+            _lag = np.zeros_like(_y)
+            _w   = np.zeros_like(_y)
+            for _di, _dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                _ri = np.arange(_nr2)[:, None] + _di
+                _ci = np.arange(_nc2)[None, :] + _dj
+                _ok = (_ri >= 0) & (_ri < _nr2) & (_ci >= 0) & (_ci < _nc2)
+                # Expand to full (nr2, nc2) before boolean indexing
+                _ri_c = np.broadcast_to(np.clip(_ri, 0, _nr2 - 1),
+                                        (_nr2, _nc2)).copy()
+                _ci_c = np.broadcast_to(np.clip(_ci, 0, _nc2 - 1),
+                                        (_nr2, _nc2)).copy()
+                _valid_nb = _ok & _valid_m & _valid_m[_ri_c, _ci_c]
+                _lag[_valid_nb] += _y[_ri_c[_valid_nb], _ci_c[_valid_nb]]
+                _w[_valid_nb]   += 1.0
+            _w = np.where(_valid_m & (_w > 0), _w, 1.0)
+            _lag = _lag / _w
+            _lag_vals = _lag[_valid_m]
+            _lag_c    = _lag_vals - _lag_vals.mean()
+            _W = _valid_m.sum() * 4.0  # approximate total weights (rook)
+            _I = (_n / _W) * float(np.dot(_y_c, _lag_c)) / (float(np.dot(_y_c, _y_c)) + 1e-12)
+            # Normal approximation E[I] = -1/(n-1), Var under normality
+            _E_I = -1.0 / (_n - 1)
+            _Var_I = max(1e-12, ((_n**2 * _W - _n * float((_w[_valid_m]**2).sum()) +
+                        3.0 * _W**2 - _n * _W) /
+                       ((_W**2) * (_n**2 - 1) + 1e-12)))
+            _z = (_I - _E_I) / np.sqrt(_Var_I)
+            _p = float(2.0 * (1.0 - stats.norm.cdf(abs(_z))))
+            return {"moran_i": round(_I, 4), "z_score": round(_z, 3),
+                    "p_value": round(_p, 6), "n_cells": int(_n)}
+
+        # Run at full subsample and approximate lag distances (1, 2, 3 cells)
+        _morans_rows = []
+        for _lag_dist, _step in [(1, 10), (2, 20), (3, 30)]:
+            _rs = np.arange(0, _nrow, _step)
+            _cs = np.arange(0, _ncol, _step)
+            _g2 = _pv_raw[np.ix_(_rs, _cs)]
+            _mi = _morans_i_rook(_g2)
+            _mi["lag_cells"]    = _lag_dist
+            _mi["lag_km_approx"] = round(_lag_dist * _step * _res * 111.0, 1)
+            _morans_rows.append(_mi)
+
+        pd.DataFrame(_morans_rows).to_csv(f_morans, index=False)
+        outputs.append(str(f_morans))
+        warn_list.append(
+            f"Moran's I (rook contiguity, 3 lag distances) computed on subsampled "
+            f"MK p-value raster ({_nr}×{_nc} cells). See morans_i_results.csv."
+        )
+
+        # Also report tie statistics from EVI stack if available
+        if evi_stack_path.exists():
+            try:
+                with _rio.open(evi_stack_path) as _stk:
+                    _evi_samp = _stk.read()  # (bands, rows, cols)
+                _n_bands_evi = _evi_samp.shape[0]
+                if _n_bands_evi >= 2:
+                    _tie_frac_per_pixel = np.mean(
+                        np.array([
+                            np.isclose(_evi_samp[_bi], _evi_samp[_bi2], atol=1e-6)
+                            for _bi in range(_n_bands_evi)
+                            for _bi2 in range(_bi + 1, _n_bands_evi)
+                        ]).any(axis=0)
+                    )
+                    warn_list.append(
+                        f"EVI tie fraction (≥1 pair of years with identical value): "
+                        f"{_tie_frac_per_pixel*100:.1f}% of valid pixels. "
+                        f"Tie-corrected MK variance available via _mk_var_with_ties()."
+                    )
+            except Exception as _exc2:
+                warn_list.append(f"EVI tie analysis failed: {_exc2}")
+
+    except Exception as _exc:
+        warn_list.append(f"Moran's I failed: {type(_exc).__name__}: {_exc}")
 
     # ── Load boundary for spatial plots ──────────────────────────────────────
     boundary = None

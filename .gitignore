@@ -42,6 +42,20 @@ Data/
 *.xlsx
 *.csv
 
+# ── Claude Code local settings (personal tool config, not project code) ───
+.claude/
+
+# ── Excluded directories (local working/reference material) ───────────────
+docs/
+context/
+docker/
+
+# ── Manuscripts: exclude all drafts/working files ────────────────────────
+# Allow only final submitted PDFs; everything else stays local
+manuscripts/*
+!manuscripts/Wangdi_etal_FEM_2026_main.pdf
+!manuscripts/Wangdi_etal_FEM_2026_supplementary.pdf
+
 # ── OS / editor ───────────────────────────────────────────────────────────
 Thumbs.db
 Desktop.ini

@@ -1,0 +1,109 @@
+# Docker Compose for Bhutan Forest Stratification Pipeline
+# Provides reproducible execution environment
+
+version: '3.8'
+
+services:
+  # Main pipeline service
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: bhutan-forest-stratification:latest
+    container_name: bhutan-pipeline
+    volumes:
+      # Mount raw data (read-only)
+      - ./raw_data:/app/raw_data:ro
+      # Mount outputs (read-write)
+      - ./outputs:/app/outputs
+      # Mount context/documentation
+      - ./context:/app/context:ro
+      # Mount manuscripts
+      - ./manuscripts:/app/manuscripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - SEED=42
+      - WORKERS=4
+    working_dir: /app
+    command: ["--all"]
+    profiles:
+      - run
+
+  # Interactive development shell
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: bhutan-forest-stratification:latest
+    container_name: bhutan-dev
+    volumes:
+      - ./raw_data:/app/raw_data:ro
+      - ./outputs:/app/outputs
+      - ./python:/app/python
+      - ./tests:/app/tests
+      - ./context:/app/context
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - PYTEST_ADDOPTS=-v
+    working_dir: /app
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    profiles:
+      - dev
+
+  # Jupyter notebook server
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: bhutan-forest-stratification:latest
+    container_name: bhutan-jupyter
+    volumes:
+      - ./raw_data:/app/raw_data:ro
+      - ./outputs:/app/outputs
+      - ./notebooks:/app/notebooks
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - JUPYTER_TOKEN=bhutan2026
+    working_dir: /app
+    command: >
+      jupyter notebook
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --NotebookApp.token='bhutan2026'
+    ports:
+      - "8888:8888"
+    profiles:
+      - jupyter
+
+  # Documentation server
+  docs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: bhutan-forest-stratification:latest
+    container_name: bhutan-docs
+    volumes:
+      - ./docs:/app/docs
+    working_dir: /app/docs
+    command: sphinx-autobuild . _build/html --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    profiles:
+      - docs
+
+# Named volumes for persistence
+volumes:
+  python_packages:
+  jupyter_data:
+
+# Network configuration
+networks:
+  default:
+    name: bhutan-forest-network

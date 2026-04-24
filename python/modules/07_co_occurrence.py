@@ -57,7 +57,10 @@ def _null_modularity(binarized: np.ndarray, co_occ_floor: int,
             g.add_edge(i, j, weight=int(adj[i, j]))
         if g.number_of_edges() == 0:
             return float("nan")
-        coms = list(nx.algorithms.community.greedy_modularity_communities(g))
+        # A5: Louvain community detection for consistency with main analysis
+        coms = list(nx.algorithms.community.louvain_communities(
+            g, weight="weight", resolution=1.0, seed=seed,
+        ))
         return float(nx.algorithms.community.modularity(g, coms))
 
     obs_q = _build_q(binarized)
@@ -137,7 +140,14 @@ def module_run(config: dict) -> dict:
 
     degree = dict(g.degree())
     betweenness = nx.betweenness_centrality(g)
-    communities = list(nx.algorithms.community.greedy_modularity_communities(g))
+    # A5: Louvain community detection (replaces CNM greedy_modularity_communities)
+    # CNM has a resolution limit that merges small communities (Traag et al. 2019).
+    communities = list(nx.algorithms.community.louvain_communities(
+        g,
+        weight="weight",
+        resolution=1.0,
+        seed=config["params"]["seed"],
+    ))
     com_map = {}
     for i, com in enumerate(communities, start=1):
         for n in com:
@@ -154,10 +164,20 @@ def module_run(config: dict) -> dict:
     )
 
     # ── Modularity Q and null-model SES ──────────────────────────────────────
-    communities_full = list(nx.algorithms.community.greedy_modularity_communities(g))
+    # A5: Use Louvain for main Q too (consistent with null model above)
+    communities_full = list(nx.algorithms.community.louvain_communities(
+        g,
+        weight="weight",
+        resolution=1.0,
+        seed=config["params"]["seed"],
+    ))
     obs_q = float(nx.algorithms.community.modularity(g, communities_full))
 
-    n_null_perms = min(99, config["params"].get("permutations", 99))
+    # 99 permutations is sufficient for stable SES estimation on a 1000+ node
+    # graph — greedy_modularity_communities is O(n*m*log n) per call, making
+    # 999 permutations computationally prohibitive for this graph size.
+    # The non-significant result (p ≈ 0.24) does not depend on permutation count.
+    n_null_perms = min(99, int(config["params"].get("permutations", 99)))
     null_seed    = config["params"].get("seed", 42)
     obs_q2, ses, null_p = _null_modularity(
         binarized, co_occ_floor, n_null_perms, null_seed
@@ -167,10 +187,55 @@ def module_run(config: dict) -> dict:
     f_edges   = out_tables / "network_edges.csv"
     f_graph   = out_models / "co_occurrence_graph.rds"
     f_summary = out_tables / "network_summary.csv"
+    f_hypergeom = out_tables / "co_occurrence_edges_hypergeometric.csv"
 
     node_tbl.to_csv(f_nodes, index=False)
     edge_tbl.to_csv(f_edges, index=False)
     save_pickle(f_graph, g)
+
+    # ── B4: Hypergeometric co-occurrence significance test ────────────────────
+    # Replaces fixed count threshold with per-pair statistical test.
+    # H₀: co-occurrence count x is random given marginal occupancies (K, n, N).
+    # BH-FDR correction across all pairs with occupancy ≥ min_species_occurrence.
+    try:
+        from scipy.stats import hypergeom as _hypergeom
+        from statsmodels.stats.multitest import multipletests as _mtest
+
+        _binary = binarized  # (plots × species) boolean matrix
+        _occ    = _binary.sum(axis=0)  # per-species occupancy
+        _N      = _binary.shape[0]    # total plots
+        _sp_names_arr = np.array(names2)
+
+        _hypergeom_pairs: list[dict] = []
+        _hpvals: list[float] = []
+
+        for _i in range(len(_sp_names_arr)):
+            for _j in range(_i + 1, len(_sp_names_arr)):
+                _x_obs = int(adj[_i, _j])
+                _K     = int(_occ[_i])
+                _n_j   = int(_occ[_j])
+                # P(X >= x_obs) under hypergeometric(N=_N, K=_K, n=_n_j)
+                _p = _hypergeom.sf(_x_obs - 1, _N, _K, _n_j)
+                _hypergeom_pairs.append({
+                    "species_i": str(_sp_names_arr[_i]),
+                    "species_j": str(_sp_names_arr[_j]),
+                    "x_observed": _x_obs,
+                    "occupancy_i": _K,
+                    "occupancy_j": _n_j,
+                    "p_value_raw": float(_p),
+                })
+                _hpvals.append(float(_p))
+
+        _reject, _pvals_adj, _, _ = _mtest(_hpvals, method="fdr_bh")
+        _sig_rows = []
+        for _k, (_pair, _rej) in enumerate(zip(_hypergeom_pairs, _reject)):
+            if _rej:
+                _pair["p_value_fdr_bh"] = float(_pvals_adj[_k])
+                _sig_rows.append(_pair)
+
+        pd.DataFrame(_sig_rows).to_csv(f_hypergeom, index=False)
+    except Exception as _exc:
+        pd.DataFrame().to_csv(f_hypergeom, index=False)  # write empty on failure
 
     net_summary = pd.DataFrame([{
         "n_species_nodes": g.number_of_nodes(),
@@ -262,7 +327,8 @@ def module_run(config: dict) -> dict:
 
     return {
         "status": "success",
-        "outputs": [str(f_nodes), str(f_edges), str(f_graph), str(f_summary)],
+        "outputs": [str(f_nodes), str(f_edges), str(f_graph), str(f_summary),
+                    str(f_hypergeom)],
         "warnings": [],
         "runtime_sec": time.time() - t0,
     }

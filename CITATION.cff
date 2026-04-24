@@ -1,0 +1,63 @@
+# CITATION.cff - Citation File Format for this software
+# See: https://citation-file-format.github.io/
+
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+
+type: software
+
+title: "Bhutan Forest Stratification and Vertical Zonation Pipeline"
+abstract: |
+  A production-ready Python pipeline for analyzing forest stratification and 
+  vertical zonation patterns across environmental gradients in Bhutan's National 
+  Forest Inventory. Implements alpha/beta diversity, CCA ordination, indicator 
+  species analysis, co-occurrence networks, and MODIS EVI trend analysis.
+
+authors:
+  - family-names: "YourLastName"
+    given-names: "YourFirstName"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    email: "your.email@university.edu"
+    affiliation: "Your University/Institution"
+  - family-names: "CoAuthorLastName"
+    given-names: "CoAuthorFirstName"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    affiliation: "Co-author Institution"
+
+repository-code: "https://github.com/YOUR_USERNAME/bhutan-forest-stratification"
+url: "https://github.com/YOUR_USERNAME/bhutan-forest-stratification"
+
+version: 1.0.0
+doi: "10.xxxx/xxxxx"  # Get from Zenodo after release
+
+date-created: 2026-02-13
+date-released: 2026-03-08
+
+license: MIT
+
+keywords:
+  - "forest ecology"
+  - "biodiversity"
+  - "Bhutan"
+  - "National Forest Inventory"
+  - "vertical zonation"
+  - "species diversity"
+  - "ordination"
+  - "remote sensing"
+  - "MODIS EVI"
+  - "Python"
+
+contact:
+  - family-names: "YourLastName"
+    given-names: "YourFirstName"
+    email: "your.email@university.edu"
+
+preferred-citation:
+  type: article
+  title: "Forest Stratification and Vertical Zonation across Environmental Gradients in Bhutan: Diversity Patterns, Community Assembly, and Long-Term Greenness Trends from the National Forest Inventory"
+  authors:
+    - family-names: "YourLastName"
+      given-names: "YourFirstName"
+  journal: "Science of the Total Environment"
+  year: 2026
+  doi: "10.xxxx/j.scitotenv.xxxx"

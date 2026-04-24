@@ -17,25 +17,16 @@ def module_run(config: dict) -> dict:
     out_tables = out_root / "tables"
 
     alpha_path = config["output"]["module_dirs"]["03_alpha_diversity"] / "tables" / "alpha_diversity_summary.csv"
-    check_file(config["paths"]["canonical"]["veg_long_csv"], "veg_long", required=True)
     check_file(alpha_path, "alpha diversity summary", required=True)
 
-    veg = pd.read_csv(config["paths"]["canonical"]["veg_long_csv"])
     alpha = pd.read_csv(alpha_path)
 
-    strata = (
-        veg[["plot_id", "stratum", "species_name"]]
-        .drop_duplicates()
-        .groupby(["plot_id", "stratum"])
-        .size()
-        .reset_index(name="n_species")
-        .pivot(index="plot_id", columns="stratum", values="n_species")
-        .fillna(0)
-        .add_prefix("richness_")
-        .reset_index()
-    )
-
-    sci = alpha.merge(strata, on="plot_id", how="left")
+    # Use the alpha diversity table directly — module 03 already computes
+    # richness_Herbs, richness_Shrubs, richness_Trees as columns in this table.
+    # Reconstructing strata from veg_long and merging with add_prefix("richness_")
+    # produces duplicate columns (richness_Herbs_x / richness_Herbs_y, r = 1.0)
+    # that inflate those components' weight in the SCI z-score sum.
+    sci = alpha.copy()
     if "shannon" not in sci.columns:
         raise RuntimeError("Alpha diversity table must include shannon column for SCI calculation.")
 
@@ -46,10 +37,37 @@ def module_run(config: dict) -> dict:
     z_cols = [c for c in sci.columns if c.startswith("z_")]
     sci["sci_index"] = sci[z_cols].sum(axis=1, skipna=True)
 
-    out_tbl    = out_tables / "stratification_complexity_index.csv"
-    out_corr   = out_tables / "sci_component_correlations.csv"
-    out_sens   = out_tables / "sci_sensitivity_analysis.csv"
+    out_tbl      = out_tables / "stratification_complexity_index.csv"
+    out_corr     = out_tables / "sci_component_correlations.csv"
+    out_sens     = out_tables / "sci_sensitivity_analysis.csv"
+    out_ft_summ  = out_tables / "sci_forest_type_summary.csv"
     sci.to_csv(out_tbl, index=False)
+
+    # ── A9: Forest-type SCI summary with SE and 95% CI ───────────────────────
+    # Small groups (n < 30) are flagged for interpretation caution.
+    if "forest_type" in sci.columns and "sci_index" in sci.columns:
+        ft_grp = sci.dropna(subset=["sci_index", "forest_type"]).groupby("forest_type")
+        ft_rows = []
+        for ft, grp_df in ft_grp:
+            n     = len(grp_df)
+            mean  = float(grp_df["sci_index"].mean())
+            sd    = float(grp_df["sci_index"].std(ddof=1)) if n > 1 else float("nan")
+            se    = sd / np.sqrt(n) if n > 0 and np.isfinite(sd) else float("nan")
+            ci_lo = mean - 1.96 * se if np.isfinite(se) else float("nan")
+            ci_hi = mean + 1.96 * se if np.isfinite(se) else float("nan")
+            ft_rows.append({
+                "forest_type":   str(ft),
+                "n":             n,
+                "sci_mean":      round(mean, 3),
+                "sci_sd":        round(sd,   3) if np.isfinite(sd)    else float("nan"),
+                "sci_se":        round(se,   3) if np.isfinite(se)    else float("nan"),
+                "sci_ci95_lo":   round(ci_lo, 3) if np.isfinite(ci_lo) else float("nan"),
+                "sci_ci95_hi":   round(ci_hi, 3) if np.isfinite(ci_hi) else float("nan"),
+                "small_sample":  n < 30,
+            })
+        pd.DataFrame(ft_rows).sort_values("sci_mean", ascending=False).to_csv(
+            out_ft_summ, index=False
+        )
 
     # ── Component correlation matrix (Spearman) ───────────────────────────────
     z_data = sci[z_cols].dropna()
@@ -119,7 +137,7 @@ def module_run(config: dict) -> dict:
 
     return {
         "status": "success",
-        "outputs": [str(out_tbl), str(out_corr), str(out_sens)],
+        "outputs": [str(out_tbl), str(out_corr), str(out_sens), str(out_ft_summ)],
         "warnings": [],
         "runtime_sec": time.time() - t0,
     }

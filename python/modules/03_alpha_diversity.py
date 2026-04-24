@@ -107,25 +107,26 @@ def module_run(config: dict) -> dict:
         ri = pd.to_numeric(alpha_full["richness"],  errors="coerce")
         ok = el.notna() & ri.notna()
         elev_band = pd.cut(el[ok], bins=_ELEV_BINS, labels=_ELEV_LABELS, right=False)
+        active_labels = [lb for lb in _ELEV_LABELS if (elev_band == lb).sum() >= 3]
         band_groups = [
             ri[ok][elev_band == lb].values
-            for lb in _ELEV_LABELS
-            if (elev_band == lb).sum() >= 3
+            for lb in active_labels
         ]
         kw_rows = []
         if len(band_groups) >= 2:
             h_stat, kw_p = _stats.kruskal(*band_groups)
-            # Eta-squared effect size: η² = (H - k + 1) / (n - k)
+            # Epsilon-squared effect size: ε² = (H - k + 1) / (n - k)
+            # (NOT eta-squared: η² = H / (n-1); this formula is ε²)
             n_total = int(ok.sum())
             k_groups = len(band_groups)
             eta2 = (h_stat - k_groups + 1) / (n_total - k_groups)
             kw_rows.append({
                 "test": "Kruskal-Wallis H",
-                "H_statistic": round(float(h_stat), 4),
-                "p_value":     float(kw_p),
-                "eta_squared": round(float(eta2), 4),
-                "n_bands":     k_groups,
-                "n_plots":     n_total,
+                "H_statistic":    round(float(h_stat), 4),
+                "p_value":        float(kw_p),
+                "epsilon_squared": round(float(eta2), 4),
+                "n_bands":        k_groups,
+                "n_plots":        n_total,
                 "interpretation": (
                     "Significant differences across elevation bands — "
                     "500-m banding captures real richness variation."
@@ -133,6 +134,21 @@ def module_run(config: dict) -> dict:
                     else "No significant differences across elevation bands."
                 ),
             })
+
+            # ── B2: Dunn's post-hoc pairwise tests (BH-FDR) ──────────────────
+            try:
+                from scikit_posthocs import posthoc_dunn
+                dunn_result = posthoc_dunn(
+                    [ri[ok][elev_band == lb].values for lb in active_labels],
+                    p_adjust="fdr_bh",
+                )
+                dunn_result.index   = active_labels
+                dunn_result.columns = active_labels
+                dunn_out = out_tables / "elevation_band_dunn_posthoc.csv"
+                dunn_result.to_csv(dunn_out)
+            except ImportError:
+                pass  # scikit-posthocs optional; skipped if not installed
+
         # Band-level summary: n, mean richness, SD
         band_summary_rows = []
         for lb in _ELEV_LABELS:

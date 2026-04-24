@@ -1,3 +1,19 @@
+"""
+Bhutan Forest Stratification Pipeline - Main Orchestrator
+
+This module provides the pipeline execution engine with support for:
+- Sequential and parallel module execution
+- Automatic dependency resolution
+- Module caching with smart invalidation
+- Resource monitoring and profiling
+- Comprehensive logging and run manifests
+
+Example:
+    >>> from python.run_pipeline import run_pipeline, get_module_registry
+    >>> registry = get_module_registry()  # Get all 14 modules
+    >>> manifest = run_pipeline(modules=["03", "04", "05"])  # Run specific modules
+"""
+
 from __future__ import annotations
 
 # Force non-interactive matplotlib backend before any module is loaded.
@@ -13,6 +29,7 @@ import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 from python.config import config
 from python.utils import log_done, log_section, setup_logging, write_json
@@ -33,6 +50,23 @@ from python.performance import (
 
 
 def get_module_registry() -> list[dict[str, str]]:
+    """
+    Return the complete module registry for the pipeline.
+
+    Returns:
+        List of module dictionaries, each containing:
+        - id: Module identifier (e.g., "00", "01", "01b")
+        - name: Human-readable module name
+        - file: Relative path to module file
+        - deps: Comma-separated list of dependency module IDs
+
+    Example:
+        >>> registry = get_module_registry()
+        >>> len(registry)
+        14
+        >>> registry[0]
+        {'id': '00', 'name': 'data_inspection', 'file': 'python/modules/00_data_inspection.py', 'deps': ''}
+    """
     return [
         {"id": "00", "name": "data_inspection", "file": "python/modules/00_data_inspection.py", "deps": ""},
         {"id": "01", "name": "data_cleaning", "file": "python/modules/01_data_cleaning.py", "deps": "00"},

@@ -1,8 +1,36 @@
 [project]
 name = "bhutan-forest-stratification"
-version = "0.1.0"
-description = "Python pipeline for forest stratification and vertical zonation in Bhutan"
+version = "1.0.0"
+description = "Production-ready Python pipeline for forest stratification and vertical zonation analysis in Bhutan's National Forest Inventory"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Your Name", email = "your.email@university.edu"}
+]
+keywords = [
+  "forest ecology",
+  "biodiversity",
+  "Bhutan",
+  "National Forest Inventory",
+  "vertical zonation",
+  "species diversity",
+  "ordination",
+  "remote sensing",
+  "MODIS EVI",
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: GIS",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
   "numpy~=1.24",         # >=1.24, <2 — pin to 1.x ABI
   "pandas~=2.0",         # >=2.0, <3
@@ -16,7 +44,9 @@ dependencies = [
   "rasterio~=1.3",       # >=1.3, <2
   "shapely~=2.0",        # >=2.0, <3
   "tqdm~=4.65",          # >=4.65, <5
-  "psutil~=5.9"          # >=5.9, <6
+  "psutil~=5.9",         # >=5.9, <6
+  "statsmodels~=0.14",   # >=0.14 — FDR correction (module 06) and VIF (module 05)
+  "scikit-posthocs>=0.8.0",  # Dunn's post-hoc test (module 03, B2)
 ]
 
 [project.optional-dependencies]
@@ -24,6 +54,37 @@ test = [
   "pytest>=7.0",
   "pytest-cov>=4.0",
 ]
+dev = [
+  "black>=23.0",
+  "isort>=5.12",
+  "flake8>=6.0",
+  "flake8-bugbear>=23.0",
+  "flake8-comprehensions>=3.0",
+  "flake8-docstrings>=1.7",
+  "mypy>=1.0",
+  "pre-commit>=3.0",
+  "bandit>=1.7",
+]
+docs = [
+  "sphinx>=7.0",
+  "sphinx-rtd-theme>=2.0",
+  "myst-parser>=2.0",
+  "sphinx-autobuild>=2021.0",
+]
+jupyter = [
+  "jupyterlab>=4.0",
+  "ipykernel>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/YOUR_USERNAME/bhutan-forest-stratification"
+Documentation = "https://bhutan-forest-stratification.readthedocs.io"
+Repository = "https://github.com/YOUR_USERNAME/bhutan-forest-stratification"
+Issues = "https://github.com/YOUR_USERNAME/bhutan-forest-stratification/issues"
+Changelog = "https://github.com/YOUR_USERNAME/bhutan-forest-stratification/CHANGELOG.md"
+
+[project.scripts]
+bhutan-pipeline = "python.run_pipeline:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -31,3 +92,76 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["python"]
+
+# ── Tool Configuration ──────────────────────────────────────────────────
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.git
+  | \.venv
+  | \.eggs
+  | \.cache
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [".venv", "build", "dist", ".git"]
+known_first_party = ["python"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+no_strict_optional = true
+exclude = ["tests/", "build/", "dist/"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-v --tb=short --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "integration: marks tests as integration tests",
+  "requires_data: marks tests that require input data",
+]
+
+[tool.coverage.run]
+source = ["python"]
+branch = true
+omit = [
+  "tests/*",
+  "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+fail_under = 70
+show_missing = true
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = "E203,W503"
+exclude = [".git", "__pycache__", "build", "dist", ".venv"]
+per-file-ignores = [
+  "__init__.py:F401",
+  "tests/*:S101,D103",
+]

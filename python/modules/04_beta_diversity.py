@@ -66,7 +66,7 @@ def module_run(config: dict) -> dict:
         metric="precomputed",
         random_state=config["params"]["seed"],
         max_iter=300,
-        n_init=4,
+        n_init=20,   # ≥20 matches vegan::metaMDS default (Borcard et al. 2018)
         init="random",
         normalized_stress=True,   # stress_ = Kruskal stress-1 (sklearn >= 1.4)
     )
@@ -76,8 +76,13 @@ def module_run(config: dict) -> dict:
 
     f_scores_csv = out_data / "nmds_scores.csv"
     f_scores_rds = out_data / "nmds_scores.rds"
-    f_summary = out_tables / "analysis_summary.csv"
-    f_perm = out_tables / "permanova_results.txt"
+    f_summary    = out_tables / "analysis_summary.csv"
+    f_perm       = out_tables / "permanova_results.txt"
+    f_disp       = out_tables / "permdisp_results.txt"
+    f_disp_csv   = out_tables / "permdisp_results.csv"
+    f_pcoa       = out_plots  / "pcoa_supplementary.png"
+    f_pcoa_axes  = out_tables / "pcoa_axis_summary.csv"
+    f_mantel     = out_tables / "mantel_test_results.csv"
 
     nmds_scores.to_csv(f_scores_csv, index=False)
     save_pickle(f_scores_rds, nmds_scores)
@@ -85,10 +90,38 @@ def module_run(config: dict) -> dict:
     raw_stress = getattr(nmds, "stress_", np.nan)
     kruskal_s1 = _kruskal_stress1(raw_stress, coords)
 
+    # ── 3D NMDS for stress reduction ──────────────────────────────────────────
+    # 2D stress ≥ 0.30 is uninterpretable (Kruskal 1964). A 3D solution
+    # typically reduces stress substantially; both values are reported.
+    kruskal_s1_3d = float("nan")
+    try:
+        nmds_3d = MDS(
+            n_components=3,
+            metric_mds=False,
+            metric="precomputed",
+            random_state=config["params"]["seed"],
+            max_iter=300,
+            n_init=20,   # ≥20 matches vegan::metaMDS default
+            init="random",
+            normalized_stress=True,
+        )
+        coords_3d = nmds_3d.fit_transform(bray)
+        raw_stress_3d = getattr(nmds_3d, "stress_", np.nan)
+        kruskal_s1_3d = _kruskal_stress1(raw_stress_3d, coords_3d)
+        nmds_scores_3d = pd.DataFrame({
+            "NMDS1": coords_3d[:, 0],
+            "NMDS2": coords_3d[:, 1],
+            "NMDS3": coords_3d[:, 2],
+            "plot_id": plot_ids,
+        })
+        nmds_scores_3d.to_csv(out_data / "nmds_scores_3d.csv", index=False)
+    except Exception as _exc:
+        warnings.append(f"3D NMDS failed: {_exc}")
+
     summ = pd.DataFrame(
         {
-            "metric": ["n_plots", "n_species", "kruskal_stress1"],
-            "value": [X.shape[0], X.shape[1], kruskal_s1],
+            "metric": ["n_plots", "n_species", "kruskal_stress1_2d", "kruskal_stress1_3d"],
+            "value": [X.shape[0], X.shape[1], kruskal_s1, kruskal_s1_3d],
         }
     )
     summ.to_csv(f_summary, index=False)
@@ -138,13 +171,14 @@ def module_run(config: dict) -> dict:
     )
     f_perm.write_text(perm_text, encoding="utf-8")
 
-    # Update summary with PERMANOVA results
+    # Update summary with PERMANOVA results (R² stored to 4 dp for consistency)
     summ = pd.concat([
         summ,
         pd.DataFrame({
             "metric": ["permanova_pseudo_f", "permanova_p", "permanova_r2",
                        "permanova_n_groups", "permanova_n_samples"],
-            "value": [pseudo_f, perm_p, perm_r2, n_groups, n_perm_samples],
+            "value": [round(pseudo_f, 4), round(perm_p, 6), round(perm_r2, 4),
+                      n_groups, n_perm_samples],
         }),
     ], ignore_index=True)
     summ.to_csv(f_summary, index=False)
@@ -171,7 +205,11 @@ def module_run(config: dict) -> dict:
 
         # Stress annotation — Kruskal stress-1 (normalized_stress=True ensures this)
         if not np.isnan(kruskal_s1):
-            stress_str = f"Kruskal stress-1 = {kruskal_s1:.4f}"
+            if np.isfinite(kruskal_s1_3d):
+                stress_str = (f"Kruskal stress-1 (2D) = {kruskal_s1:.4f}\n"
+                              f"Kruskal stress-1 (3D) = {kruskal_s1_3d:.4f}")
+            else:
+                stress_str = f"Kruskal stress-1 = {kruskal_s1:.4f}"
         else:
             stress_str = None
         if stress_str:
@@ -185,89 +223,199 @@ def module_run(config: dict) -> dict:
         fig.tight_layout()
         save_plot(fig, out_plots / "nmds_ordination.png")
 
-    # ── PERMDISP: group dispersion homogeneity test ───────────────────────────
-    # PERMANOVA is sensitive to differences in group dispersion (spread) as well
-    # as location.  PERMDISP tests whether groups differ in dispersion only.
-    # Method: compute distance of each plot to its group centroid in Bray-Curtis
-    # space, then run a Kruskal-Wallis H test (non-parametric ANOVA on distances).
-    # If PERMDISP is not significant but PERMANOVA is, the PERMANOVA result
-    # reflects genuine compositional location differences, not dispersion artefact.
-    f_disp = out_tables / "permdisp_results.txt"
+    # ── PERMDISP2: Anderson (2006) permutation-based F-test on dispersions ────
+    # Replaces the previous K-W proxy. Tests H₀: all groups have equal
+    # multivariate dispersion (spread around centroid in PCoA space).
     try:
-        from scipy import stats as _sp_stats
+        from skbio.stats.ordination import pcoa as _pcoa
+        from skbio import DistanceMatrix as _DM2
 
+        rng_disp  = np.random.default_rng(config["params"]["seed"])
         grp_arr   = np.array(grp)
         dm_arr    = bray[np.ix_(keep.to_numpy(), keep.to_numpy())]
         groups_u  = np.unique(grp_arr)
-        # Centroid distance = mean distance from each plot to its group centroid
-        # Approximated as distance to group mean in distance space (standard PERMDISP2)
-        centroid_dists = np.full(len(grp_arr), np.nan)
-        for g in groups_u:
-            idx_g = np.where(grp_arr == g)[0]
-            if len(idx_g) < 2:
-                continue
-            sub_dm = dm_arr[np.ix_(idx_g, idx_g)]
-            # Distance to centroid (average distance from each member to all others /2)
-            avg_dist = sub_dm.mean(axis=1) / 2.0
-            centroid_dists[idx_g] = avg_dist
 
-        valid_disp = ~np.isnan(centroid_dists)
-        group_dist_lists = [
-            centroid_dists[valid_disp][np.array(grp_arr)[valid_disp] == g]
-            for g in groups_u
-            if (np.array(grp_arr)[valid_disp] == g).sum() >= 2
-        ]
-        if len(group_dist_lists) >= 2:
-            h_stat, disp_p = _sp_stats.kruskal(*group_dist_lists)
+        # Compute PCoA from Bray-Curtis distance matrix
+        pc = _pcoa(_DM2(dm_arr))
+        coords_pc = pc.samples.values  # (n, n_axes)
+
+        # Distance of each plot to its group centroid in PCoA space
+        d_to_centroid = np.zeros(len(grp_arr))
+        group_disp = {}
+        for g in groups_u:
+            mask_g = (grp_arr == g)
+            if mask_g.sum() < 2:
+                d_to_centroid[mask_g] = np.nan
+                continue
+            centroid = coords_pc[mask_g].mean(axis=0)
+            dists = np.linalg.norm(coords_pc[mask_g] - centroid, axis=1)
+            d_to_centroid[mask_g] = dists
+            group_disp[g] = round(float(dists.mean()), 4)
+
+        valid_mask = np.isfinite(d_to_centroid)
+        valid_d    = d_to_centroid[valid_mask]
+        valid_g    = grp_arr[valid_mask]
+        active_grps = [g for g in groups_u if (valid_g == g).sum() >= 2]
+
+        def _f_stat(d, g):
+            grand_mean = d.mean()
+            k = len(np.unique(g))
+            n = len(d)
+            ss_b = sum(
+                (g == grp_g).sum() * (d[g == grp_g].mean() - grand_mean) ** 2
+                for grp_g in np.unique(g)
+            )
+            ss_w = sum(
+                ((d[g == grp_g] - d[g == grp_g].mean()) ** 2).sum()
+                for grp_g in np.unique(g)
+            )
+            if ss_w == 0 or n - k <= 0:
+                return float("nan")
+            return (ss_b / (k - 1)) / (ss_w / (n - k))
+
+        if len(active_grps) >= 2:
+            f_obs = _f_stat(valid_d, valid_g)
+            n_perm_disp = int(config["params"].get("permutations", 999))
+            f_null = [
+                _f_stat(valid_d, rng_disp.permutation(valid_g))
+                for _ in range(n_perm_disp)
+            ]
+            f_null_arr = np.array([x for x in f_null if np.isfinite(x)])
+            p_disp = float((np.sum(f_null_arr >= f_obs) + 1) / (len(f_null_arr) + 1))
+
             disp_lines = [
-                "PERMDISP — Homogeneity of Multivariate Dispersion",
-                "=" * 50,
-                "Method: Kruskal-Wallis H test on within-group centroid distances",
-                f"  H statistic : {h_stat:.4f}",
-                f"  p-value     : {disp_p:.4f}",
-                f"  n groups    : {len(group_dist_lists)}",
+                "PERMDISP2 — Anderson (2006) Homogeneity of Multivariate Dispersion",
+                "=" * 60,
+                "Method: Permutation-based F-test on PCoA centroid distances",
+                f"  F statistic      : {f_obs:.4f}",
+                f"  p-value          : {p_disp:.4f}",
+                f"  n permutations   : {n_perm_disp}",
+                f"  n groups         : {len(active_grps)}",
+                "",
+                "Group-level mean dispersion (distance to PCoA centroid):",
+            ] + [f"  {g}: {v}" for g, v in group_disp.items()] + [
                 "",
                 "Interpretation:",
                 (
                     "  Significant (p ≤ 0.05): groups differ in dispersion. "
-                    "PERMANOVA result may partly reflect dispersion differences, "
-                    "not only location. Report both statistics."
-                    if disp_p <= 0.05
+                    "PERMANOVA R² may partly reflect dispersion, not only location."
+                    if p_disp <= 0.05
                     else
-                    "  Non-significant (p > 0.05): no evidence of dispersion differences. "
-                    "PERMANOVA result can be interpreted as reflecting compositional "
-                    "location differences among forest types."
+                    "  Non-significant (p > 0.05): no evidence of unequal dispersions. "
+                    "PERMANOVA reflects compositional location differences."
                 ),
             ]
-            # Append PERMDISP result to permanova file
             existing = f_perm.read_text(encoding="utf-8")
-            f_perm.write_text(
-                existing + "\n\n" + "\n".join(disp_lines) + "\n",
-                encoding="utf-8",
-            )
+            f_perm.write_text(existing + "\n\n" + "\n".join(disp_lines) + "\n",
+                              encoding="utf-8")
             f_disp.write_text("\n".join(disp_lines) + "\n", encoding="utf-8")
-            # Add to summary
+            # Save CSV summary
+            disp_rows = [{"group": g, "mean_dispersion": v}
+                         for g, v in group_disp.items()]
+            disp_rows.append({"group": "PERMDISP2_F", "mean_dispersion": round(f_obs, 4)})
+            disp_rows.append({"group": "PERMDISP2_p", "mean_dispersion": round(p_disp, 4)})
+            pd.DataFrame(disp_rows).to_csv(f_disp_csv, index=False)
             summ = pd.concat([
                 summ,
                 pd.DataFrame({
-                    "metric": ["permdisp_H", "permdisp_p"],
-                    "value":  [round(h_stat, 4), round(disp_p, 6)],
+                    "metric": ["permdisp2_F", "permdisp2_p"],
+                    "value":  [round(f_obs, 4), round(p_disp, 6)],
                 }),
             ], ignore_index=True)
             summ.to_csv(f_summary, index=False)
         else:
-            f_disp.write_text("PERMDISP skipped: too few groups with ≥ 2 plots.\n",
+            f_disp.write_text("PERMDISP2 skipped: too few groups with ≥ 2 plots.\n",
                               encoding="utf-8")
     except Exception as exc:
-        warnings.append(f"PERMDISP failed: {type(exc).__name__}: {exc}")
-        f_disp.write_text(f"PERMDISP failed: {exc}\n", encoding="utf-8")
+        warnings.append(f"PERMDISP2 failed: {type(exc).__name__}: {exc}")
+        f_disp.write_text(f"PERMDISP2 failed: {exc}\n", encoding="utf-8")
+
+    # ── B1: Mantel test — compositional vs geographic distance ────────────────
+    f_mantel = out_tables / "mantel_test_results.csv"
+    try:
+        from skbio.stats.distance import mantel as _mantel, DistanceMatrix as _DMm
+        from sklearn.metrics.pairwise import haversine_distances as _hav_dist
+
+        coord_cols = [c for c in ["latitude", "longitude"] if c in env.columns]
+        if len(coord_cols) == 2 and "plot_id" in env.columns:
+            env_coord = (env.set_index("plot_id")
+                           .reindex(labels)[coord_cols]
+                           .dropna())
+            shared_ids = [i for i in labels if i in env_coord.index]
+            if len(shared_ids) >= 10:
+                geo_idx = [labels.index(i) for i in shared_ids]
+                coords_rad = np.deg2rad(
+                    env_coord.loc[shared_ids, ["latitude", "longitude"]].values
+                )
+                # Haversine distances (km) via sklearn (scipy pdist lacks haversine)
+                geo_dist = _hav_dist(coords_rad) * 6371.0
+                bc_sub = bray[np.ix_(keep.to_numpy(), keep.to_numpy())]
+                bc_shared = bc_sub[np.ix_(geo_idx, geo_idx)]
+                dm_bc  = _DMm(bc_shared, ids=shared_ids)
+                dm_geo = _DMm(geo_dist,  ids=shared_ids)
+                r_m, p_m, n_m = _mantel(
+                    dm_bc, dm_geo, method="pearson",
+                    permutations=int(config["params"].get("permutations", 999))
+                )
+                pd.DataFrame([{
+                    "mantel_r":      round(float(r_m), 4),
+                    "p_value":       round(float(p_m), 4),
+                    "n_permutations": int(n_m),
+                    "n_plots":       len(shared_ids),
+                    "method":        "Pearson",
+                    "matrices":      "Bray-Curtis vs Haversine geographic distance (km)",
+                }]).to_csv(f_mantel, index=False)
+                summ = pd.concat([
+                    summ,
+                    pd.DataFrame({
+                        "metric": ["mantel_r", "mantel_p"],
+                        "value":  [round(float(r_m), 4), round(float(p_m), 4)],
+                    }),
+                ], ignore_index=True)
+                summ.to_csv(f_summary, index=False)
+            else:
+                warnings.append("Mantel test skipped: insufficient shared plot coordinates.")
+        else:
+            warnings.append("Mantel test skipped: latitude/longitude missing from env_master.")
+    except Exception as exc:
+        warnings.append(f"Mantel test failed: {type(exc).__name__}: {exc}")
+
+    # ── ANOSIM robustness check ───────────────────────────────────────────────
+    # ANOSIM R is less sensitive to dispersion heterogeneity than PERMANOVA
+    # and provides a complementary test of between-group separation.
+    try:
+        from skbio.stats.distance import anosim as _anosim
+        anosim_result = _anosim(dm, grouping=grp,
+                                permutations=config["params"]["permutations"])
+        anosim_r = float(anosim_result["test statistic"])
+        anosim_p = float(anosim_result["p-value"])
+        anosim_text = (
+            f"\n\nANOSIM Robustness Check\n"
+            f"{'=' * 45}\n"
+            f"  R statistic : {anosim_r:.4f}\n"
+            f"  p-value     : {anosim_p:.4f}\n"
+            f"  Permutations: {config['params']['permutations']}\n"
+            f"  Interpretation: R > 0.25 suggests meaningful separation; "
+            f"R near 0 = groups indistinguishable.\n"
+        )
+        existing_perm = f_perm.read_text(encoding="utf-8")
+        f_perm.write_text(existing_perm + anosim_text, encoding="utf-8")
+        summ = pd.concat([
+            summ,
+            pd.DataFrame({
+                "metric": ["anosim_r", "anosim_p"],
+                "value":  [round(anosim_r, 4), round(anosim_p, 6)],
+            }),
+        ], ignore_index=True)
+        summ.to_csv(f_summary, index=False)
+    except Exception as exc:
+        warnings.append(f"ANOSIM failed: {type(exc).__name__}: {exc}")
 
     # ── PCoA supplementary figure ─────────────────────────────────────────────
     # Principal Coordinates Analysis (PCoA / Classical MDS) is a metric
     # ordination that faithfully represents Bray-Curtis distances better than
     # 2D NMDS when stress is high (Kruskal stress-1 = 0.338 here).
     # Provided as Supplementary Figure S1b for reviewer transparency.
-    f_pcoa = out_plots / "pcoa_supplementary.png"
     try:
         from sklearn.manifold import MDS as _MDS
 
@@ -288,8 +436,16 @@ def module_run(config: dict) -> dict:
         # Variance explained by each axis
         eigenvalues = np.var(pcoa_coords, axis=0)
         var_total = eigenvalues.sum()
-        pct1 = eigenvalues[0] / var_total * 100 if var_total > 0 else 0
-        pct2 = eigenvalues[1] / var_total * 100 if var_total > 0 else 0
+        pct_var = eigenvalues / var_total * 100 if var_total > 0 else np.zeros(len(eigenvalues))
+        pct1 = float(pct_var[0])
+        pct2 = float(pct_var[1])
+
+        # Write PCoA axis summary table (A11)
+        f_pcoa_axes = out_tables / "pcoa_axis_summary.csv"
+        pd.DataFrame({
+            "axis": [f"PCoA{i+1}" for i in range(len(pct_var))],
+            "pct_total_variation": [round(p, 2) for p in pct_var],
+        }).to_csv(f_pcoa_axes, index=False)
 
         with pub_style():
             fig2, ax2 = plt.subplots(figsize=(7, 5.5))
@@ -308,17 +464,12 @@ def module_run(config: dict) -> dict:
                             linewidths=0, rasterized=True)
             ax2.axhline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
             ax2.axvline(0, color="0.6", linewidth=0.6, linestyle="-", zorder=0)
-            ax2.set_xlabel(f"PCoA1 ({pct1:.1f}% variance)")
-            ax2.set_ylabel(f"PCoA2 ({pct2:.1f}% variance)")
+            ax2.set_xlabel("PCoA1")
+            ax2.set_ylabel("PCoA2")
             ax2.set_title(
                 "PCoA Ordination of Plot Species Composition\n"
                 "(Bray–Curtis dissimilarity; metric ordination, Supplementary)"
             )
-            ax2.text(0.02, 0.02,
-                     "Metric PCoA provided as complement to NMDS\n"
-                     f"(NMDS Kruskal stress-1 = {kruskal_s1:.3f} > 0.20 threshold)",
-                     transform=ax2.transAxes, fontsize=8, va="bottom",
-                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.9))
             fig2.tight_layout()
             save_plot(fig2, f_pcoa)
     except Exception as exc:
@@ -327,7 +478,8 @@ def module_run(config: dict) -> dict:
     return {
         "status": "success",
         "outputs": [str(f_scores_csv), str(f_scores_rds), str(f_summary),
-                    str(f_perm), str(f_disp), str(f_pcoa)],
+                    str(f_perm), str(f_disp), str(f_disp_csv), str(f_pcoa),
+                    str(f_pcoa_axes), str(f_mantel)],
         "warnings": warnings,
         "runtime_sec": time.time() - t0,
     }

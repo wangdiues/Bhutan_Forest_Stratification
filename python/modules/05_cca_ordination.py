@@ -155,6 +155,20 @@ def module_run(config: dict) -> dict:
             "their environmental variables will be imputed by median."
         )
 
+    # ── A3: Circular transformation of aspect ─────────────────────────────────
+    # Aspect (0–360°) is circular: 1° and 359° are adjacent, not 358° apart.
+    # Standard decomposition into northness (sin) and eastness (cos) removes
+    # this artificial discontinuity (Pewsey & García-Portugués, 2021).
+    if "aspect" in env.columns:
+        asp_rad = np.deg2rad(pd.to_numeric(env["aspect"], errors="coerce"))
+        env["aspect_northness"] = np.sin(asp_rad)   # S→N gradient
+        env["aspect_eastness"]  = np.cos(asp_rad)   # W→E gradient
+        env = env.drop(columns=["aspect"])
+        warnings_list.append(
+            "Aspect decomposed into aspect_northness and aspect_eastness "
+            "(sin/cos; Pewsey & García-Portugués, 2021). Raw aspect removed."
+        )
+
     # ── Select environmental predictors ──────────────────────────────────────
     # Exclude: identifiers, spatial surrogates, synthetic proxies, non-numeric.
     num_vars = [c for c in env.columns if pd.api.types.is_numeric_dtype(env[c])]
@@ -206,12 +220,25 @@ def module_run(config: dict) -> dict:
     cca_result = _run_ecological_cca(Y_df, X_env_df)
 
     eigvals   = cca_result.eigvals               # pd.Series  (attr name in skbio)
-    prop_exp  = cca_result.proportion_explained  # pd.Series
+    prop_exp  = cca_result.proportion_explained  # pd.Series (relative to constrained inertia)
     n_axes    = len(eigvals)
     n_comp    = min(2, n_axes)
 
+    # ── A8: Compute total chi-square inertia of species matrix ─────────────────
+    # prop_exp is relative to constrained inertia only.
+    # pct_total = eigenvalue / total_inertia * 100 contextualises each axis
+    # against all compositional variation (Borcard et al. 2018, Table 6.1).
+    _row_sums   = Y_df.sum(axis=1)
+    _col_sums   = Y_df.sum(axis=0)
+    _grand_tot  = float(Y_df.sum().sum())
+    _expected   = np.outer(_row_sums.values, _col_sums.values) / (_grand_tot + 1e-12)
+    _chi2_total = float(((Y_df.values - _expected) ** 2 / (_expected + 1e-12)).sum())
+    total_inertia = _chi2_total / (_grand_tot + 1e-12)
+    if total_inertia <= 0:
+        total_inertia = float(eigvals.sum())  # fallback
+
     # ── Axis permutation test ─────────────────────────────────────────────────
-    n_perms = min(99, int(config["params"].get("permutations", 99)))
+    n_perms = int(config["params"].get("permutations", 999))
     perm_rows = _permutation_test_cca(
         Y_df, X_env_df, eigvals,
         n_perms=n_perms, seed=config["params"]["seed"]
@@ -245,11 +272,15 @@ def module_run(config: dict) -> dict:
 
     var_rows = []
     for k in range(n_comp):
+        ev = float(eigvals.iloc[k])
+        pe = float(prop_exp.iloc[k])
         var_rows.append({
-            "axis": f"CCA{k+1}",
-            "eigenvalue":           round(float(eigvals.iloc[k]), 6),
-            "proportion_explained": round(float(prop_exp.iloc[k]), 6),
-            "pct_explained":        round(float(prop_exp.iloc[k]) * 100, 2),
+            "axis":                 f"CCA{k+1}",
+            "eigenvalue":           round(ev, 6),
+            "proportion_explained": round(pe, 6),
+            "pct_constrained":      round(pe * 100, 2),      # % of constrained inertia
+            "pct_total":            round(ev / total_inertia * 100, 2),  # % of total inertia (A8)
+            "pct_explained":        round(pe * 100, 2),      # kept for back-compat
         })
     var_df = pd.DataFrame(var_rows)
 
@@ -276,6 +307,8 @@ def module_run(config: dict) -> dict:
     r2_full = _mean_r2(Y_np, X_np)
 
     vpart_rows = []
+    grp_r2_alone: dict[str, float] = {}
+    grp_r2_pure:  dict[str, float] = {}
     for grp_name, cols in group_cols.items():
         cols_in_env = [c for c in cols if c in X_env_df.columns]
         if not cols_in_env:
@@ -284,6 +317,8 @@ def module_run(config: dict) -> dict:
         other    = [c for c in usable if c not in cols_in_env]
         r2_others = _mean_r2(Y_np, X_env_df[other].to_numpy()) if other else 0.0
         r2_pure  = r2_full - r2_others
+        grp_r2_alone[grp_name] = r2_grp
+        grp_r2_pure[grp_name]  = r2_pure
         vpart_rows.append({
             "group":                 grp_name,
             "variables":             ", ".join(cols_in_env),
@@ -292,6 +327,45 @@ def module_run(config: dict) -> dict:
             "adj_r2_pure_fraction":  round(r2_pure, 4),
             "adj_r2_full_model":     round(r2_full, 4),
         })
+
+    # ── A4: Shared variance between topography and climate ────────────────────
+    # For two groups A and B (Borcard et al. 1992):
+    #   [a] pure_topo  = R²_full  − R²_climate_alone
+    #   [b] shared     = R²_topo_alone + R²_climate_alone − R²_full
+    #   [c] pure_climate = R²_full − R²_topo_alone
+    #   [d] unexplained = 1 − R²_full
+    if "topography" in grp_r2_alone and "climate" in grp_r2_alone:
+        r2_topo_alone    = grp_r2_alone["topography"]
+        r2_climate_alone = grp_r2_alone["climate"]
+        shared_r2        = r2_topo_alone + r2_climate_alone - r2_full
+        unexplained_r2   = 1.0 - r2_full
+        check_sum_abc    = grp_r2_pure.get("topography", float("nan")) + \
+                           shared_r2 + grp_r2_pure.get("climate", float("nan"))
+        vpart_rows.append({
+            "group":                 "SHARED_topo+climate",
+            "variables":             "topography ∩ climate (shared fraction)",
+            "n_variables":           0,
+            "adj_r2_group_alone":    round(shared_r2,      4),
+            "adj_r2_pure_fraction":  round(shared_r2,      4),
+            "adj_r2_full_model":     round(r2_full,        4),
+        })
+        vpart_rows.append({
+            "group":                 "UNEXPLAINED",
+            "variables":             "residual (1 − R²_full)",
+            "n_variables":           0,
+            "adj_r2_group_alone":    round(unexplained_r2, 4),
+            "adj_r2_pure_fraction":  round(unexplained_r2, 4),
+            "adj_r2_full_model":     round(r2_full,        4),
+        })
+        vpart_rows.append({
+            "group":                 "CHECK_SUM_ABC",
+            "variables":             "pure_topo + shared + pure_climate (must equal R²_full)",
+            "n_variables":           0,
+            "adj_r2_group_alone":    round(check_sum_abc,  4),
+            "adj_r2_pure_fraction":  round(check_sum_abc,  4),
+            "adj_r2_full_model":     round(r2_full,        4),
+        })
+
     vpart_rows.append({
         "group":                "FULL MODEL",
         "variables":            ", ".join(usable),
@@ -305,6 +379,7 @@ def module_run(config: dict) -> dict:
     # ── Write outputs ─────────────────────────────────────────────────────────
     f_model   = out_models / "cca_model.rds"
     f_anova   = out_tables / "cca_anova.txt"
+    f_vif     = out_tables / "cca_vif_diagnostics.csv"
     f_site    = out_tables / "cca_site_scores.csv"
     f_species = out_tables / "cca_species_scores.csv"
     f_env_out = out_tables / "cca_env_biplot_scores.csv"
@@ -320,21 +395,47 @@ def module_run(config: dict) -> dict:
     perm_df.to_csv(f_perm, index=False)
     vpart_df.to_csv(f_vpart, index=False)
 
+    # ── VIF collinearity diagnostics ─────────────────────────────────────────
+    vif_df_out = pd.DataFrame()
+    try:
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+        vif_rows = []
+        X_vif = X_env_df.to_numpy(dtype=float)
+        for i, col in enumerate(X_env_df.columns):
+            try:
+                vif_val = float(variance_inflation_factor(X_vif, i))
+            except Exception:
+                vif_val = float("nan")
+            vif_rows.append({
+                "variable": col,
+                "VIF": round(vif_val, 2) if np.isfinite(vif_val) else float("nan"),
+            })
+        vif_df_out = pd.DataFrame(vif_rows).sort_values("VIF", ascending=False, ignore_index=True)
+        vif_df_out.to_csv(f_vif, index=False)
+        high_vif = vif_df_out[vif_df_out["VIF"] > 10]["variable"].tolist()
+        if high_vif:
+            warnings_list.append(f"High collinearity (VIF > 10): {', '.join(high_vif)}")
+    except ImportError:
+        warnings_list.append("statsmodels not installed; VIF diagnostics skipped.")
+        f_vif.write_text("VIF diagnostics skipped (statsmodels not installed).\n", encoding="utf-8")
+
     anova_lines = [
         "Ecological CCA — Axis Permutation Test",
-        "=" * 45,
+        "=" * 60,
         f"Method : skbio.stats.ordination.cca (ter Braak 1986)",
         f"Plots  : {len(Y_df)}  |  Species : {Y_df.shape[1]}  |  Env vars : {len(usable)}",
         f"Permutations per axis: {n_perms}",
+        f"Total chi-square inertia: {total_inertia:.4f}",
         "",
-        "Axis     Eigenvalue   % Explained   p-value   Significant?",
-        "-" * 58,
+        "Axis   Eigenvalue  %constrained  %total_inertia  p-value  Sig?",
+        "-" * 65,
     ]
     for vr, pr in zip(var_rows, perm_rows):
         sig = "YES" if pr.get("significant_p005") else "no"
         anova_lines.append(
             f"{vr['axis']}   {vr['eigenvalue']:>10.4f}   "
-            f"{vr['pct_explained']:>9.2f}%   "
+            f"{vr['pct_constrained']:>9.2f}%   "
+            f"{vr['pct_total']:>10.2f}%   "
             f"{pr.get('p_value', float('nan')):>7.4f}   {sig}"
         )
     anova_lines += [
@@ -347,6 +448,15 @@ def module_run(config: dict) -> dict:
             f"  {vp['group']:<14} alone={vp['adj_r2_group_alone']:.4f}  "
             f"pure={vp['adj_r2_pure_fraction']:.4f}"
         )
+    if not vif_df_out.empty:
+        high_vif_list = vif_df_out[vif_df_out["VIF"] > 10]["variable"].tolist()
+        anova_lines += [
+            "",
+            "VIF collinearity diagnostics (Variance Inflation Factor):",
+            f"  Variables with VIF > 10: {high_vif_list if high_vif_list else 'none'}",
+        ]
+        for _, vrow in vif_df_out.head(10).iterrows():
+            anova_lines.append(f"  {vrow['variable']:<30} VIF = {vrow['VIF']:.2f}")
     f_anova.write_text("\n".join(anova_lines) + "\n", encoding="utf-8")
 
     # ── Plot: triplot ─────────────────────────────────────────────────────────
@@ -375,8 +485,8 @@ def module_run(config: dict) -> dict:
                 ft_col = env_full[col].astype(str).tolist()
                 break
 
-        pct1 = var_rows[0]["pct_explained"]
-        pct2 = var_rows[1]["pct_explained"] if len(var_rows) > 1 else 0.0
+        pct1 = var_rows[0]["pct_constrained"]  # % of constrained inertia for axis label
+        pct2 = var_rows[1]["pct_constrained"] if len(var_rows) > 1 else 0.0
         p1   = perm_rows[0]["p_value"]   if perm_rows else float("nan")
         p2   = perm_rows[1]["p_value"]   if len(perm_rows) > 1 else float("nan")
 
@@ -434,7 +544,7 @@ def module_run(config: dict) -> dict:
     return {
         "status": "success",
         "outputs": [str(f_model), str(f_anova), str(f_site), str(f_species),
-                    str(f_env_out), str(f_var), str(f_perm), str(f_vpart)],
+                    str(f_env_out), str(f_var), str(f_perm), str(f_vpart), str(f_vif)],
         "warnings": warnings_list,
         "runtime_sec": time.time() - t0,
     }
